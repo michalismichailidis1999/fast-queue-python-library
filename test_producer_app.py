@@ -1,7 +1,8 @@
 from broker_client import BrokerClient, BrokerClientConf
-from producer import Producer, ProducerConf
 
-broker_conf = BrokerClientConf(retries=1, timeoutms=2000)
+# from producer import Producer, ProducerConf
+
+broker_conf = BrokerClientConf(retries=3, timeoutms=2000)
 
 client = BrokerClient(conf=broker_conf)
 

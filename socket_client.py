@@ -28,9 +28,12 @@ class SocketClient:
             if not reconnected: return [True, "Could not connect to broker", None]
 
         retries = 0
-        
+
         while retries < self.conf.retries:
             try:
+                if retries >= 1:
+                    print("Request failed. Retrying again.")
+
                 if not self.is_connected:
                     reconnected = self.try_reconnect()
 
@@ -46,7 +49,7 @@ class SocketClient:
                     self.client_socket.close()
                     self.is_connected = False
                     return [True, "Connection to broker shutdown unexpectedly", None]
-                
+
                 response_err = self.get_response_error(response)
 
                 if response_err[0] != -1:
@@ -54,7 +57,7 @@ class SocketClient:
                     continue
 
                 return [False, None, response]
-            except self.client_socket.timeout:
+            except TimeoutError:
                 retries += 1
             except BlockingIOError as e:
                 # Non-blocking socket has no data ready yet, so it's still alive.
@@ -69,13 +72,13 @@ class SocketClient:
                 self.client_socket.close()
                 self.is_connected = False
                 return [True, f"Exception occurred: {e}", None]
-        
+
     def try_reconnect(self) -> bool:
         return False
-    
+
     def get_response_error(self, res:bytes) -> Tuple[int,str]:
         return [-1, None]
-    
+
     def is_error_retryable(error_type:int) -> bool:
         return error_type in [
             NOT_LEADER_FOR_PARTITION, 
