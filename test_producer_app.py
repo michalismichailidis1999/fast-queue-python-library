@@ -2,11 +2,13 @@ from broker_client import BrokerClient, BrokerClientConf
 
 # from producer import Producer, ProducerConf
 
-broker_conf = BrokerClientConf(retries=3, timeoutms=3000)
+broker_conf = BrokerClientConf(retries=3, timeoutms=None)
 
 client = BrokerClient(conf=broker_conf)
 
-client.create_queue("my-fucking-test-queue")
+queue_name = input("Enter a queue name: ")
+
+client.create_queue(queue_name, 3)
 
 # producer_conf = ProducerConf()
 
