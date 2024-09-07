@@ -21,7 +21,9 @@ class BrokerClient(SocketClient):
 
     def create_queue(self, queue: str, partitions: int = 1) -> None:
         res = self.send_request(
-            bytes([CREATE_QUEUE]) + queue.encode() + bytes([partitions])
+            CREATE_QUEUE.to_bytes(length=4, byteorder="big")
+            + queue.encode()
+            + partitions.to_bytes(length=4, byteorder="big")
         )
 
     def delete_queue(self, queue: str) -> None:
