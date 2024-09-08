@@ -52,34 +52,41 @@ class SocketClient:
 
                 response_err = self.get_response_error(response)
 
-                if response_err[0] != -1:
+                if response_err[0] != NO_ERROR:
+                    if not self.is_error_retryable(response_err[0]):
+                        return [True, response_err[1], None]
+
                     retries += 1
+
                     continue
 
                 return [False, None, response]
             except TimeoutError:
                 retries += 1
-            except BlockingIOError as e:
-                # Non-blocking socket has no data ready yet, so it's still alive.
-                return [True, "Blocking I/O error occured while trying to send request", None]
+
+                if retries >= self.conf.retries:
+                    return [True, "Request timed out", None]
             except ConnectionResetError:
                 # The connection was forcibly closed by the remote host.
                 self.client_socket.close()
                 self.is_connected = False
-                return [True, "Connection to broker shutdown unexpectedly", None]
+                return [True, "Connection to broker shut down unexpectedly", None]
             except Exception as e:
                 # Other errors (like broken pipe, etc.) mean the socket is likely dead.
                 self.client_socket.close()
                 self.is_connected = False
-                return [True, f"Exception occurred: {e}", None]
+                return [True, f"{e}", None]
 
     def try_reconnect(self) -> bool:
         return False
 
     def get_response_error(self, res:bytes) -> Tuple[int,str]:
-        return [-1, None]
+        return [
+            int.from_bytes(bytes=res[0:1], byteorder="big", signed=False),
+            res[4:].decode() if len(res) > 4 else "Internal server error",
+        ]
 
-    def is_error_retryable(error_type:int) -> bool:
+    def is_error_retryable(self, error_type: int) -> bool:
         return error_type in [
             NOT_LEADER_FOR_PARTITION, 
             UNKNOWN_QUEUE_OR_PARTITION, 
