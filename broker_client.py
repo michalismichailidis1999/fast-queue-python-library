@@ -51,4 +51,9 @@ class BrokerClient(SocketClient):
             print(f"Queue {queue} deleted successfully")
 
     def list_queues(self) -> list[str]:
-        res = self.send_request(bytes([LIST_QUEUES]))
+        res = self.send_request(LIST_QUEUES.to_bytes(length=4, byteorder=ENDIAS))
+
+        if res[0]:
+            print(f"Could not get queues list. Reason: {res[1]}")
+        else:
+            print("Queues: ", res[2][1:].decode())
