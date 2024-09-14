@@ -36,7 +36,19 @@ class BrokerClient(SocketClient):
             print(f"Queue {queue} created successfully")
 
     def delete_queue(self, queue: str) -> None:
-        res = self.send_request(bytes([DELETE_QUEUE]) + queue.encode())
+        res = self.send_request(
+            DELETE_QUEUE.to_bytes(length=4, byteorder=ENDIAS) + queue.encode()
+        )
+
+        if res[0]:
+            print(f"Could not delete queue {queue}. Reason: {res[1]}")
+        elif (
+            int.from_bytes(bytes=res[2][4:5], byteorder="big", signed=False) - ord("B")
+            == 0
+        ):
+            print(f"Queue {queue} does not exist")
+        else:
+            print(f"Queue {queue} deleted successfully")
 
     def list_queues(self) -> list[str]:
         res = self.send_request(bytes([LIST_QUEUES]))

@@ -10,6 +10,8 @@ queue_name = input("Enter a queue name: ")
 
 client.create_queue(queue_name, 3)
 
+client.delete_queue(queue_name)
+
 # producer_conf = ProducerConf()
 
 # producer = Producer(client=client, conf=producer_conf)
