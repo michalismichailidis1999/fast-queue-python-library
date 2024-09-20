@@ -28,7 +28,7 @@ class BrokerClient(SocketClient):
         if res[0]:
             print(f"Could not create queue {queue}. Reason: {res[1]}")
         elif (
-            int.from_bytes(bytes=res[2][4:5], byteorder="big", signed=False) - ord("B")
+            int.from_bytes(bytes=res[2][4:5], byteorder=ENDIAS, signed=False) - ord("B")
             == 0
         ):
             print(f"Queue {queue} already exists")
@@ -43,7 +43,7 @@ class BrokerClient(SocketClient):
         if res[0]:
             print(f"Could not delete queue {queue}. Reason: {res[1]}")
         elif (
-            int.from_bytes(bytes=res[2][4:5], byteorder="big", signed=False) - ord("B")
+            int.from_bytes(bytes=res[2][4:5], byteorder=ENDIAS, signed=False) - ord("B")
             == 0
         ):
             print(f"Queue {queue} does not exist")
@@ -56,4 +56,4 @@ class BrokerClient(SocketClient):
         if res[0]:
             print(f"Could not get queues list. Reason: {res[1]}")
         else:
-            print("Queues: ", res[2][1:].decode())
+            print("Queues: ", res[2][4:].decode())
