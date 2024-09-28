@@ -1,3 +1,4 @@
+from typing import Any
 from socket_client import *
 from constants import *
 
@@ -19,10 +20,11 @@ class BrokerClient(SocketClient):
         super().__init__(ip_address, port, conf)
 
     def create_queue(self, queue: str, partitions: int = 1) -> None:
+
         res = self.send_request(
-            CREATE_QUEUE.to_bytes(length=4, byteorder=ENDIAS)
-            + queue.encode()
-            + partitions.to_bytes(length=4, byteorder=ENDIAS)
+            self.create_request(
+                CREATE_QUEUE, [(QUEUE_NAME, queue), (PARTITIONS, partitions)]
+            )
         )
 
         if res[0]:
@@ -57,3 +59,21 @@ class BrokerClient(SocketClient):
             print(f"Could not get queues list. Reason: {res[1]}")
         else:
             print("Queues: ", res[2][4:].decode())
+
+    def create_request(self, req_type: int, values: list[Tuple[int, Any]]) -> bytes:
+        req_bytes = req_type.to_bytes(length=4, byteorder=ENDIAS)
+
+        for reqValKey, val in values:
+            req_bytes += reqValKey.to_bytes(
+                length=4, byteorder=ENDIAS
+            ) + self.__val_to_bytes(val)
+
+        return req_bytes
+
+    def __val_to_bytes(self, val: Any) -> bytes:
+        if isinstance(val, int):
+            return val.to_bytes(length=4, byteorder=ENDIAS)
+        elif isinstance(val, str):
+            return len(val).to_bytes(length=4, byteorder=ENDIAS) + val.encode()
+        else:
+            raise Exception("Invalid request value of type ", type(val))
