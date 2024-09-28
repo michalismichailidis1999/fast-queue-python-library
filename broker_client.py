@@ -20,7 +20,6 @@ class BrokerClient(SocketClient):
         super().__init__(ip_address, port, conf)
 
     def create_queue(self, queue: str, partitions: int = 1) -> None:
-
         res = self.send_request(
             self.create_request(
                 CREATE_QUEUE, [(QUEUE_NAME, queue), (PARTITIONS, partitions)]
@@ -28,45 +27,54 @@ class BrokerClient(SocketClient):
         )
 
         if res[0]:
-            print(f"Could not create queue {queue}. Reason: {res[1]}")
-        elif (
+            raise Exception(f"Could not create queue {queue}. Reason: {res[1]}")
+
+        queue_created: bool = (
             int.from_bytes(bytes=res[2][4:5], byteorder=ENDIAS, signed=False) - ord("B")
             == 0
-        ):
+        )
+
+        if queue_created:
             print(f"Queue {queue} already exists")
         else:
             print(f"Queue {queue} created successfully")
 
     def delete_queue(self, queue: str) -> None:
         res = self.send_request(
-            DELETE_QUEUE.to_bytes(length=4, byteorder=ENDIAS) + queue.encode()
+            self.create_request(DELETE_QUEUE, [(QUEUE_NAME, queue)])
         )
 
         if res[0]:
-            print(f"Could not delete queue {queue}. Reason: {res[1]}")
-        elif (
+            raise Exception(f"Could not delete queue {queue}. Reason: {res[1]}")
+
+        queue_deleted: bool = (
             int.from_bytes(bytes=res[2][4:5], byteorder=ENDIAS, signed=False) - ord("B")
             == 0
-        ):
+        )
+
+        if queue_deleted:
             print(f"Queue {queue} does not exist")
         else:
             print(f"Queue {queue} deleted successfully")
 
     def list_queues(self) -> list[str]:
-        res = self.send_request(LIST_QUEUES.to_bytes(length=4, byteorder=ENDIAS))
+        res = self.send_request(self.create_request(LIST_QUEUES))
 
         if res[0]:
-            print(f"Could not get queues list. Reason: {res[1]}")
-        else:
-            print("Queues: ", res[2][4:].decode())
+            raise Exception(f"Could not get queues list. Reason: {res[1]}")
 
-    def create_request(self, req_type: int, values: list[Tuple[int, Any]]) -> bytes:
+        print("Queues: ", res[2][4:].decode())
+
+    def create_request(
+        self, req_type: int, values: list[Tuple[int, Any]] = None
+    ) -> bytes:
         req_bytes = req_type.to_bytes(length=4, byteorder=ENDIAS)
 
-        for reqValKey, val in values:
-            req_bytes += reqValKey.to_bytes(
-                length=4, byteorder=ENDIAS
-            ) + self.__val_to_bytes(val)
+        if values != None:
+            for reqValKey, val in values:
+                req_bytes += reqValKey.to_bytes(
+                    length=4, byteorder=ENDIAS
+                ) + self.__val_to_bytes(val)
 
         return req_bytes
 
