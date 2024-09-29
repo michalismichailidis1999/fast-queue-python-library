@@ -26,11 +26,8 @@ class BrokerClient(SocketClient):
             )
         )
 
-        if res[0]:
-            raise Exception(f"Could not create queue {queue}. Reason: {res[1]}")
-
         queue_created: bool = (
-            int.from_bytes(bytes=res[2][4:5], byteorder=ENDIAS, signed=False) - ord("B")
+            int.from_bytes(bytes=res[4:5], byteorder=ENDIAS, signed=False) - ord("B")
             == 0
         )
 
@@ -44,11 +41,8 @@ class BrokerClient(SocketClient):
             self.create_request(DELETE_QUEUE, [(QUEUE_NAME, queue)])
         )
 
-        if res[0]:
-            raise Exception(f"Could not delete queue {queue}. Reason: {res[1]}")
-
         queue_deleted: bool = (
-            int.from_bytes(bytes=res[2][4:5], byteorder=ENDIAS, signed=False) - ord("B")
+            int.from_bytes(bytes=res[4:5], byteorder=ENDIAS, signed=False) - ord("B")
             == 0
         )
 
@@ -60,10 +54,7 @@ class BrokerClient(SocketClient):
     def list_queues(self) -> list[str]:
         res = self.send_request(self.create_request(LIST_QUEUES))
 
-        if res[0]:
-            raise Exception(f"Could not get queues list. Reason: {res[1]}")
-
-        print("Queues: ", res[2][4:].decode())
+        print("Queues: ", res[4:].decode())
 
     def create_request(
         self, req_type: int, values: list[Tuple[int, Any]] = None
@@ -72,9 +63,10 @@ class BrokerClient(SocketClient):
 
         if values != None:
             for reqValKey, val in values:
-                req_bytes += reqValKey.to_bytes(
-                    length=4, byteorder=ENDIAS
-                ) + self.__val_to_bytes(val)
+                if val != None:
+                    req_bytes += reqValKey.to_bytes(
+                        length=4, byteorder=ENDIAS
+                    ) + self.__val_to_bytes(val)
 
         return req_bytes
 

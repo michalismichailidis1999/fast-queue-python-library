@@ -1,73 +1,182 @@
+from typing import Dict
 from broker_client import *
 from constants import *
 from uuid import uuid4
+import threading
+import signal
+import time
+
+stop_event = threading.Event()
+
+
+def signal_handler(signum, frame):
+    print("Signal received, stopping daemon thread...")
+    stop_event.set()
+
 
 class ProducerConf:
 
-    def __init__(self, queue: str) -> None:
-        self.queue = queue
+    """
+    :param str queue: Name of the queue in which the producer will produce messages to.
+    :param int wait_ms: Milliseconds to wait before sending the messages batch.
+    :param int max_batch_size: Maximum batch size in bytes producer can hold locally before sending it to broker.
+    :raise BadValueError: If invalid argument is passed or incorrect value type is passed.
+    """
+
+    def __init__(self, queue: str, **kwargs) -> None:
+        self.queue: str = queue
+        self.wait_ms: int = 100
+        self.max_batch_size: int = 16384
+
+        for key, value in kwargs.items():
+            if key == "wait_ms":
+                if not isinstance(value, int):
+                    raise ValueError(f"{key} must be an integer")
+
+                self.wait_ms: int = value
+            if key == "max_batch_size":
+                if not isinstance(value, int):
+                    raise ValueError(f"{key} must be an integer")
+
+                self.max_batch_size: int = value
+            else:
+                raise ValueError(f"Invalid argument {key}")
 
 
 class Producer:
+
+    int_handler = signal.signal(signal.SIGINT, signal_handler)
+    term_handler = signal.signal(signal.SIGTERM, signal_handler)
+
     def __init__(self, client: BrokerClient, conf: ProducerConf) -> None:
         self.client: BrokerClient = client
         self.conf: ProducerConf = conf
         self.transactional_id = str(uuid4())
-        self.queue = conf.queue
 
-        # if successfull receives back [producer_id]
+        self.partitions: Dict[int, list[str]] = {}
+        self.total_bytes_cached = 0
+
+        self.open_transactions: Dict[int, int] = {}
+
+        # if successfull receives back [producer_id, epoch]
         res = self.client.send_request(
-            PRODUCER_CONNECT.to_bytes(length=4, byteorder=ENDIAS)
-            + (len(self.transactional_id)).to_bytes(length=4, byteorder=ENDIAS)
-            + (len(self.conf.queue)).to_bytes(length=4, byteorder=ENDIAS)
-            + self.transactional_id.encode()
-            + self.conf.queue.encode()
+            self.client.create_request(
+                PRODUCER_CONNECT,
+                [
+                    (TRANSACTIONAL_ID, self.transactional_id),
+                    (QUEUE_NAME, self.conf.queue),
+                ],
+            )
         )
 
-        if res[0]:
-            raise Exception(res[1])
+        self.id: int = int.from_bytes(bytes=res[4:8], byteorder=ENDIAS, signed=False)
+        self.epoch: int = int.from_bytes(
+            bytes=res[8:12], byteorder=ENDIAS, signed=False
+        )
 
-        self.id: int = int.from_bytes(bytes=res[2][4:8], byteorder=ENDIAS, signed=False)
+        if self.conf.wait_ms > 0:
+            t = threading.Thread(target=self.__flush_messages_batch, daemon=True)
+            t.start()
 
         print(
             f"Producer with transactional_id {self.transactional_id} initialized for queue {self.conf.queue}"
         )
 
-    def produce(self, message: bytes) -> None:
-        partition: int = 1
-        total_messages_sent = 1
+    def produce(self, message: str) -> None:
+        if message == None or message == "":
+            raise ValueError("Message was empty")
 
+        self.produce_many([message])
+
+        print(f"Produced message {message.decode()}")
+
+    def produce_many(self, messages: list[str]):
+        for message in messages:
+            partition: int = self.__get_message_partition(message)
+
+            if partition not in self.partitions:
+                self.partitions[partition] = []
+
+            self.partitions[partition].append(message)
+            self.total_bytes_cached += len(message)
+
+        messages.clear()
+
+        if self.conf.max_batch_size <= self.total_bytes_cached:
+            self.flush()
+
+    def flush(self):
+        print("Flushing messages...")
+
+        thread_id = threading.get_ident()
+
+        for partition in self.partitions.keys():
+            res = self.client.send_request(
+                self.client.create_request(
+                    PRODUCE,
+                    [
+                        (TRANSACTIONAL_ID, self.transactional_id),
+                        (TRANSACTION_ID, self.open_transactions[thread_id]),
+                        (PRODUCER_ID, self.id),
+                        (PRODUCER_EPOCH, self.epoch),
+                        (PARTITION, partition),
+                    ]
+                    + [(MESSAGE, message) for message in self.partitions[partition]],
+                )
+            )
+
+            flushed_bytes = sum(
+                [len(message) for message in self.partitions[partition]]
+            )
+
+            print(f"Flushed {flushed_bytes} bytes from partition {partition}")
+
+            self.total_bytes_cached -= flushed_bytes
+            del self.partitions[partition]
+
+        print("Messages flushed")
+
+    def begin_transaction(self):
         res = self.client.send_request(
-            PRODUCE.to_bytes(length=4, byteorder=ENDIAS)
-            + len(self.queue).to_bytes(length=4, byteorder=ENDIAS)
-            + self.conf.queue.encode()
-            + self.id.to_bytes(length=4, byteorder=ENDIAS)
-            + partition.to_bytes(length=4, byteorder=ENDIAS)
-            + total_messages_sent.to_bytes(length=4, byteorder=ENDIAS)
-            + self.__get_message_sizes_to_bytes([message])
-            + self.__convert_messages_to_bytes([message])
+            self.client.create_request(
+                BEGIN_TRANSACTION, [(TRANSACTIONAL_ID, self.transactional_id)]
+            )
         )
 
-        print(f"Produced message {message.decode()} successfully")
+        thread_id = threading.get_ident()
 
-    def __get_message_sizes_to_bytes(self, messages: list[str]) -> bytes:
-        if len(messages) == 0:
-            raise Exception("Cannot convert empty messages array into bytes")
+        self.open_transactions[thread_id] = int.from_bytes(
+            bytes=res[4:8], byteorder=ENDIAS, signed=False
+        )
 
-        _bytes = len(messages[0]).to_bytes(length=4, byteorder=ENDIAS)
+    def commit_transaction(self, transaction_id: int):
+        thread_id = threading.get_ident()
 
-        for i in range(1, len(messages)):
-            _bytes += len(messages[i]).to_bytes(length=4, byteorder=ENDIAS)
+        if thread_id not in self.open_transactions:
+            raise ValueError("Transaction cannot be None")
 
-        return _bytes
+        transaction_id: int = self.open_transactions[thread_id]
 
-    def __convert_messages_to_bytes(self, messages: list[str]) -> bytes:
-        if len(messages) == 0:
-            raise Exception("Cannot convert empty messages array into bytes")
+        self.client.send_request(
+            self.client.create_request(
+                COMMIT_TRANSACTION,
+                [
+                    (TRANSACTIONAL_ID, self.transactional_id),
+                    (TRANSACTION_ID, transaction_id),
+                ],
+            )
+        )
 
-        _bytes = messages[0].encode()
+    def __flush_messages_batch(self):
+        while not stop_event.is_set():
+            self.flush()
+            time.sleep(self.conf.wait_ms / 1000)
 
-        for i in range(1, len(messages)):
-            _bytes += messages[i].encode()
+        print("Gracefully shutting down...")
 
-        return _bytes
+        if self.total_bytes_cached > 0:
+            print("Trying to flush remaining messages before shutdown..")
+            self.flush()
+
+    def __get_message_partition(message: str) -> int:
+        return 1

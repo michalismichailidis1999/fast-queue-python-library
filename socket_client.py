@@ -21,11 +21,12 @@ class SocketClient:
         if self.conf.timeoutms is not None:
             self.client_socket.settimeout(self.conf.timeoutms / 1000)
 
-    def send_request(self, req:bytes) -> Tuple[bool, str, bytes]: # (Error Occured, Error Message, response bytes)
+    def send_request(self, req: bytes) -> bytes:
         if not self.is_connected:
             reconnected = self.try_reconnect()
 
-            if not reconnected: return [True, "Could not connect to broker", None]
+            if not reconnected:
+                raise Exception("Could not connect to broker")
 
         retries = 0
 
@@ -48,34 +49,34 @@ class SocketClient:
                 if not response:
                     self.client_socket.close()
                     self.is_connected = False
-                    return [True, "Connection to broker shutdown unexpectedly", None]
+                    raise Exception("Connection to broker shutdown unexpectedly")
 
                 response_err = self.get_response_error(response)
 
                 if response_err[0] != NO_ERROR:
                     if not self.is_error_retryable(response_err[0]):
-                        return [True, response_err[1], None]
+                        raise Exception(response_err[1])
 
                     retries += 1
 
                     continue
 
-                return [False, None, response]
+                return response
             except TimeoutError:
                 retries += 1
 
                 if retries >= self.conf.retries:
-                    return [True, "Request timed out", None]
+                    raise Exception("Request timed out")
             except ConnectionResetError:
                 # The connection was forcibly closed by the remote host.
                 self.client_socket.close()
                 self.is_connected = False
-                return [True, "Connection to broker shut down unexpectedly", None]
+                raise Exception("Connection to broker shut down unexpectedly")
             except Exception as e:
                 # Other errors (like broken pipe, etc.) mean the socket is likely dead.
                 self.client_socket.close()
                 self.is_connected = False
-                return [True, f"{e}", None]
+                raise e
 
     def try_reconnect(self) -> bool:
         return False
