@@ -15,4 +15,6 @@ producer = Producer(client=client, conf=producer_conf)
 
 message = input("Enter a message to send to broker 1.000.000 times: ")
 
-producer.produce(message)
+producer.produce(f"message ({1})")
+
+producer.close()

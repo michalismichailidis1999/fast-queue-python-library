@@ -3,16 +3,7 @@ from broker_client import *
 from constants import *
 from uuid import uuid4
 import threading
-import signal
 import time
-
-stop_event = threading.Event()
-
-
-def signal_handler(signum, frame):
-    print("Signal received, stopping daemon thread...")
-    stop_event.set()
-
 
 class ProducerConf:
 
@@ -25,8 +16,10 @@ class ProducerConf:
 
     def __init__(self, queue: str, **kwargs) -> None:
         self.queue: str = queue
-        self.wait_ms: int = 100
-        self.max_batch_size: int = 16384
+        self.wait_ms: int = (
+            0  # send immediatelly to broker, do not wait for batch to be accumulated
+        )
+        self.max_batch_size: int = 16384  # 16KB
 
         for key, value in kwargs.items():
             if key == "wait_ms":
@@ -34,7 +27,7 @@ class ProducerConf:
                     raise ValueError(f"{key} must be an integer")
 
                 self.wait_ms: int = value
-            if key == "max_batch_size":
+            elif key == "max_batch_size":
                 if not isinstance(value, int):
                     raise ValueError(f"{key} must be an integer")
 
@@ -44,9 +37,6 @@ class ProducerConf:
 
 
 class Producer:
-
-    int_handler = signal.signal(signal.SIGINT, signal_handler)
-    term_handler = signal.signal(signal.SIGTERM, signal_handler)
 
     def __init__(self, client: BrokerClient, conf: ProducerConf) -> None:
         self.client: BrokerClient = client
@@ -58,24 +48,10 @@ class Producer:
 
         self.open_transactions: Dict[int, int] = {}
 
-        # if successfull receives back [producer_id, epoch]
-        res = self.client.send_request(
-            self.client.create_request(
-                PRODUCER_CONNECT,
-                [
-                    (TRANSACTIONAL_ID, self.transactional_id),
-                    (QUEUE_NAME, self.conf.queue),
-                ],
-            )
-        )
-
-        self.id: int = int.from_bytes(bytes=res[4:8], byteorder=ENDIAS, signed=False)
-        self.epoch: int = int.from_bytes(
-            bytes=res[8:12], byteorder=ENDIAS, signed=False
-        )
+        self.__connect()
 
         if self.conf.wait_ms > 0:
-            t = threading.Thread(target=self.__flush_messages_batch, daemon=True)
+            t = threading.Thread(target=self.__flush_messages_batch)
             t.start()
 
         print(
@@ -111,10 +87,11 @@ class Producer:
         thread_id = threading.get_ident()
 
         for partition in self.partitions.keys():
-            res = self.client.send_request(
+            self.client.send_request(
                 self.client.create_request(
                     PRODUCE,
                     [
+                        (QUEUE_NAME, self.conf.queue),
                         (TRANSACTIONAL_ID, self.transactional_id),
                         (TRANSACTION_ID, self.open_transactions[thread_id]),
                         (PRODUCER_ID, self.id),
@@ -167,16 +144,39 @@ class Producer:
             )
         )
 
+    def close(self):
+        try:
+            if self.total_bytes_cached > 0:
+                print("Trying to flush remaining messages before shutdown..")
+                self.flush()
+        except Exception as e:
+            print(f"Could not flush remaining messages. Reason: {e}")
+
+        self.client.close()
+
+        print("Producer closed")
+
     def __flush_messages_batch(self):
-        while not stop_event.is_set():
+        while True:
             self.flush()
             time.sleep(self.conf.wait_ms / 1000)
 
-        print("Gracefully shutting down...")
-
-        if self.total_bytes_cached > 0:
-            print("Trying to flush remaining messages before shutdown..")
-            self.flush()
-
     def __get_message_partition(message: str) -> int:
-        return 1
+        return 0
+
+    def __connect(self):
+        # if successfull receives back [producer_id, epoch]
+        res = self.client.send_request(
+            self.client.create_request(
+                PRODUCER_CONNECT,
+                [
+                    (TRANSACTIONAL_ID, self.transactional_id),
+                    (QUEUE_NAME, self.conf.queue),
+                ],
+            )
+        )
+
+        self.id: int = int.from_bytes(bytes=res[4:8], byteorder=ENDIAS, signed=False)
+        self.epoch: int = int.from_bytes(
+            bytes=res[8:12], byteorder=ENDIAS, signed=False
+        )

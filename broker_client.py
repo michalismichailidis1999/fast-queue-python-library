@@ -77,3 +77,6 @@ class BrokerClient(SocketClient):
             return len(val).to_bytes(length=4, byteorder=ENDIAS) + val.encode()
         else:
             raise Exception("Invalid request value of type ", type(val))
+
+    def close(self):
+        self.client_socket.close()
