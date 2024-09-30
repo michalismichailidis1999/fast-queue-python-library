@@ -50,6 +50,9 @@ class Producer:
 
         self.__connect()
 
+        self.messages_mut = threading.Lock()
+        self.transactions_mut = threading.Lock()
+
         if self.conf.wait_ms > 0:
             t = threading.Thread(target=self.__flush_messages_batch)
             t.start()
@@ -67,82 +70,141 @@ class Producer:
         print(f"Produced message {message.decode()}")
 
     def produce_many(self, messages: list[str]):
-        for message in messages:
-            partition: int = self.__get_message_partition(message)
+        ex: Exception = None
+        total_bytes_cached: int = 0
 
-            if partition not in self.partitions:
-                self.partitions[partition] = []
+        self.messages_mut.acquire()
 
-            self.partitions[partition].append(message)
-            self.total_bytes_cached += len(message)
+        try:
+            for message in messages:
+                partition: int = self.__get_message_partition(message)
 
-        messages.clear()
+                if partition not in self.partitions:
+                    self.partitions[partition] = []
 
-        if self.conf.max_batch_size <= self.total_bytes_cached:
+                self.partitions[partition].append(message)
+                self.total_bytes_cached += len(message)
+
+            messages.clear()
+
+            total_bytes_cached = self.total_bytes_cached
+        except Exception as e:
+            ex = e
+        finally:
+            self.messages_mut.release()
+
+        if ex != None:
+            raise ex
+
+        if self.conf.max_batch_size <= total_bytes_cached:
             self.flush()
 
     def flush(self):
         print("Flushing messages...")
 
-        thread_id = threading.get_ident()
+        ex: Exception = None
 
-        for partition in self.partitions.keys():
-            self.client.send_request(
-                self.client.create_request(
-                    PRODUCE,
-                    [
-                        (QUEUE_NAME, self.conf.queue),
-                        (TRANSACTIONAL_ID, self.transactional_id),
-                        (TRANSACTION_ID, self.open_transactions[thread_id]),
-                        (PRODUCER_ID, self.id),
-                        (PRODUCER_EPOCH, self.epoch),
-                        (PARTITION, partition),
-                    ]
-                    + [(MESSAGE, message) for message in self.partitions[partition]],
+        self.transactions_mut.acquire()
+        self.messages_mut.acquire()
+
+        try:
+            thread_id = threading.get_ident()
+
+            for partition in self.partitions.keys():
+                self.client.send_request(
+                    self.client.create_request(
+                        PRODUCE,
+                        [
+                            (QUEUE_NAME, self.conf.queue),
+                            (TRANSACTIONAL_ID, self.transactional_id),
+                            (
+                                TRANSACTION_ID,
+                                (
+                                    self.open_transactions[thread_id]
+                                    if thread_id in self.open_transactions
+                                    else None
+                                ),
+                            ),
+                            (PRODUCER_ID, self.id),
+                            (PRODUCER_EPOCH, self.epoch),
+                            (PARTITION, partition),
+                        ]
+                        + [
+                            (MESSAGE, message) for message in self.partitions[partition]
+                        ],
+                    )
                 )
-            )
 
-            flushed_bytes = sum(
-                [len(message) for message in self.partitions[partition]]
-            )
+                flushed_bytes = sum(
+                    [len(message) for message in self.partitions[partition]]
+                )
 
-            print(f"Flushed {flushed_bytes} bytes from partition {partition}")
+                print(f"Flushed {flushed_bytes} bytes from partition {partition}")
 
-            self.total_bytes_cached -= flushed_bytes
-            del self.partitions[partition]
+                self.total_bytes_cached -= flushed_bytes
+                del self.partitions[partition]
+        except Exception as e:
+            ex = e
+        finally:
+            self.transactions_mut.release()
+            self.messages_mut.release()
 
         print("Messages flushed")
 
     def begin_transaction(self):
-        res = self.client.send_request(
-            self.client.create_request(
-                BEGIN_TRANSACTION, [(TRANSACTIONAL_ID, self.transactional_id)]
+        ex: Exception = None
+
+        self.transactions_mut.acquire()
+
+        try:
+            res = self.client.send_request(
+                self.client.create_request(
+                    BEGIN_TRANSACTION, [(TRANSACTIONAL_ID, self.transactional_id)]
+                )
             )
-        )
 
-        thread_id = threading.get_ident()
+            thread_id = threading.get_ident()
 
-        self.open_transactions[thread_id] = int.from_bytes(
-            bytes=res[4:8], byteorder=ENDIAS, signed=False
-        )
+            self.open_transactions[thread_id] = int.from_bytes(
+                bytes=res[4:8], byteorder=ENDIAS, signed=False
+            )
+        except Exception as e:
+            ex = e
+        finally:
+            self.transactions_mut.release()
+
+        if ex != None:
+            raise ex
 
     def commit_transaction(self, transaction_id: int):
-        thread_id = threading.get_ident()
+        ex: Exception = None
 
-        if thread_id not in self.open_transactions:
-            raise ValueError("Transaction cannot be None")
+        self.transactions_mut.acquire()
 
-        transaction_id: int = self.open_transactions[thread_id]
+        try:
+            thread_id = threading.get_ident()
 
-        self.client.send_request(
-            self.client.create_request(
-                COMMIT_TRANSACTION,
-                [
-                    (TRANSACTIONAL_ID, self.transactional_id),
-                    (TRANSACTION_ID, transaction_id),
-                ],
+            if thread_id not in self.open_transactions:
+                raise ValueError("Transaction cannot be None")
+
+            transaction_id: int = self.open_transactions[thread_id]
+
+            self.client.send_request(
+                self.client.create_request(
+                    COMMIT_TRANSACTION,
+                    [
+                        (TRANSACTIONAL_ID, self.transactional_id),
+                        (TRANSACTION_ID, transaction_id),
+                    ],
+                )
             )
-        )
+        except Exception as e:
+            ex = e
+        finally:
+            self.transactions_mut.release()
+
+        if ex != None:
+            raise ex
 
     def close(self):
         try:
