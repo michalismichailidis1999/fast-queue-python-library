@@ -9,12 +9,13 @@ queue_name = input("Enter a queue name: ")
 
 client.create_queue(queue=queue_name, partitions=1)
 
-producer_conf = ProducerConf(queue=queue_name, wait_ms=100, max_batch_size=16384)
+producer_conf = ProducerConf(queue=queue_name, wait_ms=1000, max_batch_size=16384)
 
 producer = Producer(client=client, conf=producer_conf)
 
 message = input("Enter a message to send to broker 1.000.000 times: ")
 
-producer.produce(f"message ({1})")
+for i in range(1, 1000000):
+    producer.produce(f"{message} ({1})")
 
 producer.close()

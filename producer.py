@@ -54,7 +54,7 @@ class Producer:
         self.transactions_mut = threading.Lock()
 
         if self.conf.wait_ms > 0:
-            t = threading.Thread(target=self.__flush_messages_batch)
+            t = threading.Thread(target=self.__flush_messages_batch, daemon=True)
             t.start()
 
         print(
@@ -66,8 +66,6 @@ class Producer:
             raise ValueError("Message was empty")
 
         self.produce_many([message])
-
-        print(f"Produced message {message.decode()}")
 
     def produce_many(self, messages: list[str]):
         ex: Exception = None
@@ -100,56 +98,61 @@ class Producer:
             self.flush()
 
     def flush(self):
-        print("Flushing messages...")
-
         ex: Exception = None
 
         self.transactions_mut.acquire()
         self.messages_mut.acquire()
 
         try:
-            thread_id = threading.get_ident()
+            if len(self.partitions.keys()) > 0:
+                print("Flushing messages...")
 
-            for partition in self.partitions.keys():
-                self.client.send_request(
-                    self.client.create_request(
-                        PRODUCE,
-                        [
-                            (QUEUE_NAME, self.conf.queue),
-                            (TRANSACTIONAL_ID, self.transactional_id),
-                            (
-                                TRANSACTION_ID,
+                thread_id = threading.get_ident()
+
+                for partition in self.partitions.keys():
+                    if len(self.partitions[partition]) == 0:
+                        continue
+
+                    self.client.send_request(
+                        self.client.create_request(
+                            PRODUCE,
+                            [
+                                (QUEUE_NAME, self.conf.queue),
+                                (TRANSACTIONAL_ID, self.transactional_id),
                                 (
-                                    self.open_transactions[thread_id]
-                                    if thread_id in self.open_transactions
-                                    else None
+                                    TRANSACTION_ID,
+                                    (
+                                        self.open_transactions[thread_id]
+                                        if thread_id in self.open_transactions
+                                        else None
+                                    ),
                                 ),
-                            ),
-                            (PRODUCER_ID, self.id),
-                            (PRODUCER_EPOCH, self.epoch),
-                            (PARTITION, partition),
-                        ]
-                        + [
-                            (MESSAGE, message) for message in self.partitions[partition]
-                        ],
+                                (PRODUCER_ID, self.id),
+                                (PRODUCER_EPOCH, self.epoch),
+                                (PARTITION, partition),
+                            ]
+                            + [
+                                (MESSAGE, message)
+                                for message in self.partitions[partition]
+                            ],
+                        )
                     )
-                )
 
-                flushed_bytes = sum(
-                    [len(message) for message in self.partitions[partition]]
-                )
+                    flushed_bytes = sum(
+                        [len(message) for message in self.partitions[partition]]
+                    )
 
-                print(f"Flushed {flushed_bytes} bytes from partition {partition}")
+                    print(f"Flushed {flushed_bytes} bytes from partition {partition}")
 
-                self.total_bytes_cached -= flushed_bytes
-                del self.partitions[partition]
+                    self.total_bytes_cached -= flushed_bytes
+                    del self.partitions[partition]
+
+                    print("Messages flushed")
         except Exception as e:
             ex = e
         finally:
             self.transactions_mut.release()
             self.messages_mut.release()
-
-        print("Messages flushed")
 
     def begin_transaction(self):
         ex: Exception = None
@@ -220,10 +223,10 @@ class Producer:
 
     def __flush_messages_batch(self):
         while True:
-            self.flush()
             time.sleep(self.conf.wait_ms / 1000)
+            self.flush()
 
-    def __get_message_partition(message: str) -> int:
+    def __get_message_partition(self, message: str) -> int:
         return 0
 
     def __connect(self):
