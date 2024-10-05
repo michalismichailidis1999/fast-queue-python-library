@@ -15,7 +15,11 @@ producer_conf = ProducerConf(queue=queue_name, wait_ms=1000, max_batch_size=1638
 producer = Producer(client=client, conf=producer_conf)
 
 while True:
-    message = input("Enter a message: ")
+    message = input("Enter a message (type 'exit' to stop): ")
+
+    if message == "exit":
+        break
+
     producer.produce(Message(payload=message))
 
 producer.close()

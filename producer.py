@@ -119,34 +119,45 @@ class Producer:
                     if len(self.partitions[partition]) == 0:
                         continue
 
-                    self.client.send_request(
-                        self.client.create_request(
-                            PRODUCE,
-                            [
-                                (QUEUE_NAME, self.conf.queue),
-                                (TRANSACTIONAL_ID, self.transactional_id),
-                                (
-                                    TRANSACTION_ID,
-                                    (
-                                        self.open_transactions[thread_id]
-                                        if thread_id in self.open_transactions
-                                        else None
-                                    ),
-                                ),
-                                (PRODUCER_ID, self.id),
-                                (PRODUCER_EPOCH, self.epoch),
-                                (PARTITION, partition),
-                            ]
-                            + [
-                                (MESSAGE, str(message))
-                                for message in self.partitions[partition]
-                            ],
-                        )
-                    )
+                    partition_ex: Exception = None
+                    flushed_bytes: int = 0
 
-                    flushed_bytes = sum(
-                        [len(message) for message in self.partitions[partition]]
-                    )
+                    try:
+                        self.client.send_request(
+                            self.client.create_request(
+                                PRODUCE,
+                                [
+                                    (QUEUE_NAME, self.conf.queue),
+                                    (TRANSACTIONAL_ID, self.transactional_id),
+                                    (
+                                        TRANSACTION_ID,
+                                        (
+                                            self.open_transactions[thread_id]
+                                            if thread_id in self.open_transactions
+                                            else None
+                                        ),
+                                    ),
+                                    (PRODUCER_ID, self.id),
+                                    (PRODUCER_EPOCH, self.epoch),
+                                    (PARTITION, partition),
+                                ]
+                                + [
+                                    (MESSAGE, str(message))
+                                    for message, _ in self.partitions[partition]
+                                ],
+                            )
+                        )
+                    except Exception as e:
+                        partition_ex = e
+                    finally:
+                        for message, cb in self.partitions[partition]:
+                            try:
+                                flushed_bytes += message.get_total_bytes()
+                                cb(partition_ex, message)
+                            except Exception as e:
+                                print(
+                                    f"Error occured while executing on_delivery callback. {e}"
+                                )
 
                     print(f"Flushed {flushed_bytes} bytes from partition {partition}")
 
