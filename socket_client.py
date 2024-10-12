@@ -2,23 +2,84 @@ import socket
 from typing import Tuple
 from constants import *
 from queue import Queue
-
+import ssl
 
 class Socket(socket.socket):
     pass
 
 
+def verify_certificate_chain(connection, cert):
+    """
+    Performs custom certificate verification.
+
+    Args:
+        connection: The SSLSocket object.
+        cert: The server's certificate.
+
+    Returns:
+        True if the certificate is considered valid, False otherwise.
+    """
+
+    # 1. Extract certificate details (e.g., issuer, subject, expiry date)
+    #    You can use the OpenSSL library to parse the certificate and
+    #    access its fields.
+
+    # 2. Implement your verification logic
+    #    - Check if the issuer is in your list of trusted CAs.
+    #    - Verify the certificate chain (if necessary).
+    #    - Validate the certificate's expiry date.
+    #    - Perform any other checks required by your application.
+
+    # Example: Check if the issuer is "My Trusted CA"
+    print(cert)
+    if cert.get_issuer().CN == "My Trusted CA":
+        return True
+    else:
+        return False
+
+
 class SocketConnection:
+
     def __init__(
-        self, socket: Socket, ip_address: str, port: int, is_connected: bool = True
+        self,
+        sock: Socket,
+        ssl_sock: ssl.SSLSocket,
+        ip_address: str,
+        port: int,
+        timeoutms: int,
+        is_connected: bool = True,
     ) -> None:
-        self.socket: Socket = socket
+        self.sock: Socket = sock
+        self.ssock: ssl.SSLSocket = ssl_sock
         self.is_connected: bool = is_connected
         self.ip_address: str = ip_address
         self.port: int = port
+        self.timeoutms: int = timeoutms
 
     def reconnect(self):
-        self.socket.connect((self.ip_address, self.port))
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.connect((self.ip_address, self.port))
+
+        if self.timeoutms is not None:
+            self.sock.settimeout(self.timeoutms / 1000)
+
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+        self.ssock = context.wrap_socket(self.sock, server_hostname=self.ip_address)
+
+    def close(self):
+        try:
+            self.ssock.close()
+        except Exception as e:
+            print(f"Could not close socket connection. {e}")
+        finally:
+            self.is_connected = False
+
+    def send_bytes(self, req: bytes):
+        self.sock.sendall(req)
+
+    def receive_bytes(self) -> bytes:
+        return self.sock.recv(1024)
 
 
 class SocketClientConf:
@@ -34,14 +95,29 @@ class SocketClient:
 
     def add_connection(self, ip_address: str, port: int):
         # Create a TCP/IP socket
-        socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        socket.connect((ip_address, port))
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((ip_address, port))
 
         if self.conf.timeoutms is not None:
-            socket.settimeout(self.conf.timeoutms / 1000)
+            sock.settimeout(self.conf.timeoutms / 1000)
+
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+
+        # Set the custom verification callback
+        context.verify_mode = ssl.CERT_REQUIRED
+        context.verify_flags = ssl.VERIFY_CRL_CHECK_CHAIN  # Optional: Check CRL
+        context.check_hostname = True  # Verify hostname (if applicable)
+        context.verify_callback = verify_certificate_chain
+
+        ssock = context.wrap_socket(sock, server_hostname=ip_address)
 
         conn: SocketConnection = SocketConnection(
-            socket=socket, ip_address=ip_address, port=port, is_connected=True
+            sock=sock,
+            ssl_sock=ssock,
+            ip_address=ip_address,
+            port=port,
+            timeoutms=self.conf.timeoutms,
+            is_connected=True,
         )
 
         self.pool.put(conn)
@@ -68,14 +144,13 @@ class SocketClient:
                     if not reconnected: return [True, "Could not connect to broker", None]
 
                 # Send the message to the server
-                conn.socket.sendall(req)
+                conn.send_bytes(req)
 
                 # Wait for the response from the server
-                response = conn.socket.recv(1024)
+                response = conn.receive_bytes()
 
                 if not response:
-                    conn.socket.close()
-                    conn.is_connected = False
+                    conn.close()
                     self.pool.put(conn)
                     raise Exception("Connection to broker shutdown unexpectedly")
 
@@ -100,13 +175,11 @@ class SocketClient:
                     self.pool.put(conn)
                     raise Exception("Request timed out")
             except ConnectionResetError:
-                conn.socket.close()
-                conn.is_connected = False
+                conn.close()
                 self.pool.put(conn)
                 raise Exception("Connection to broker shut down unexpectedly")
             except Exception as e:
-                conn.socket.close()
-                conn.is_connected = False
+                conn.close()
                 self.pool.put(conn)
                 raise e
 

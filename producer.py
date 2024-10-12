@@ -47,7 +47,7 @@ class Producer:
         self.transactional_id = str(uuid4())
 
         self.partitions: Dict[
-            int, list[(Message, Callable[[Exception, Message, int]])]
+            int, list[(Message, Callable[[Exception, Message, int], None])]
         ] = {}
         self.total_bytes_cached = 0
 
@@ -72,7 +72,9 @@ class Producer:
         )
 
     def produce(
-        self, message: Message, on_delivery: Callable[[Exception, Message, int]] = None
+        self,
+        message: Message,
+        on_delivery: Callable[[Exception, Message, int], None] = None,
     ) -> None:
         if message.payload == None or message.payload == "":
             raise ValueError("Message was empty")

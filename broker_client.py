@@ -8,6 +8,7 @@ class BrokerClientConf(SocketClientConf):
 
 
 class BrokerClient(SocketClient):
+
     def __init__(
         self,
         ip_address: str = "127.0.0.1",
