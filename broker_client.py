@@ -3,15 +3,18 @@ from socket_client import *
 from constants import *
 
 class BrokerClientConf(SocketClientConf):
-    def __init__(self, retries: int = 0, timeoutms: int = None) -> None:
-        super().__init__(retries, timeoutms)
+
+    def __init__(
+        self, retries: int = 0, timeoutms: int = None, use_https: bool = False
+    ) -> None:
+        super().__init__(retries=retries, timeoutms=timeoutms, use_https=use_https)
 
 
 class BrokerClient(SocketClient):
 
     def __init__(
         self,
-        ip_address: str = "127.0.0.1",
+        ip_address: str = "localhost",
         port: int = 9877,
         conf: BrokerClientConf = None,
     ) -> None:

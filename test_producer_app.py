@@ -2,7 +2,7 @@ from broker_client import BrokerClient, BrokerClientConf
 from producer import Producer, ProducerConf
 from models import Message
 
-broker_conf = BrokerClientConf(retries=3, timeoutms=None)
+broker_conf = BrokerClientConf(retries=3, timeoutms=None, use_https=True)
 
 client = BrokerClient(conf=broker_conf)
 
