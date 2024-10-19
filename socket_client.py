@@ -1,5 +1,5 @@
 import socket
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 
 import OpenSSL
 from constants import *
@@ -8,16 +8,6 @@ import ssl
 
 class Socket(socket.socket):
     pass
-
-
-def custom_verification(cert: Dict[str, str] | None):
-    print(cert)
-
-    if cert.get("CN") == "My Local Root CA":
-        print("Cert issuer is valid")
-    else:
-        raise ssl.SSLError("Could not verify the server's certificate")
-
 
 def load_p12_and_verify(context: ssl.SSLContext, path: str, password: str = None):
     try:
@@ -99,10 +89,8 @@ class SocketConnection:
 
             cert = self.ssock.getpeercert()
 
-            if cert is None:
+            if self.ssock.getpeercert() is None:
                 raise ssl.SSLError("Failed to retrieve server certificate")
-            else:
-                custom_verification(cert)
 
     def close(self):
         try:
@@ -146,30 +134,22 @@ class SocketClient:
         ssock: ssl.SSLSocket = None
 
         if self.conf.use_https:
-            # context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
+            context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
 
-            context.load_cert_chain(
-                certfile="C:\\Users\\Windows\\.ssh\\message_broker_certs\\localhost_client.pem",
-                keyfile="C:\\Users\\Windows\\.ssh\\message_broker_certs\\localhost_client.key",
-            )
             context.load_verify_locations(
-                cafile="C:\\Users\\Windows\\.ssh\\message_broker_certs\\rootCA.pem"
+                "C:\\Users\\Windows\\.ssh\\message_broker_certs\\ca.crt"
             )
 
-            context.check_hostname = True
-            context.verify_mode = ssl.CERT_REQUIRED
+            # use for mutual tls
+            # context.load_cert_chain(
+            #     certfile="C:\\Users\\Windows\\.ssh\\message_broker_certs\\client.crt",
+            #     keyfile="C:\\Users\\Windows\\.ssh\\message_broker_certs\\client.key",
+            # )
 
             ssock = context.wrap_socket(sock, server_hostname=ip_address)
 
-            cert = ssock.getpeercert()
-
-            print("My Cert: ", cert)
-
-            if cert is None:
+            if ssock.getpeercert() is None:
                 raise ssl.SSLError("Failed to retrieve server certificate")
-            else:
-                custom_verification(cert)
 
         conn: SocketConnection = SocketConnection(
             sock=sock,
