@@ -2,7 +2,14 @@ from broker_client import BrokerClient, BrokerClientConf
 from producer import Producer, ProducerConf
 from models import Message
 
-broker_conf = BrokerClientConf(retries=3, timeoutms=None, use_https=True)
+broker_conf = BrokerClientConf(
+    retries=3,
+    timeoutms=None,
+    use_https=True,
+    root_cert="C:\\Users\\Windows\\.ssh\\message_broker_certs\\ca.crt",
+    # cert="C:\\Users\\Windows\\.ssh\\message_broker_certs\\client.crt",
+    # cert_key="C:\\Users\\Windows\\.ssh\\message_broker_certs\\client.key",
+)
 
 client = BrokerClient(conf=broker_conf)
 

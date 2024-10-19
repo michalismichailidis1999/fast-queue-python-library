@@ -5,9 +5,22 @@ from constants import *
 class BrokerClientConf(SocketClientConf):
 
     def __init__(
-        self, retries: int = 0, timeoutms: int = None, use_https: bool = False
+        self,
+        retries: int = 0,
+        timeoutms: int = None,
+        use_https: bool = False,
+        root_cert: str = None,
+        cert: str = None,
+        cert_key: str = None,
     ) -> None:
-        super().__init__(retries=retries, timeoutms=timeoutms, use_https=use_https)
+        super().__init__(
+            retries=retries,
+            timeoutms=timeoutms,
+            use_https=use_https,
+            root_cert=root_cert,
+            cert=cert,
+            cert_key=cert_key,
+        )
 
 
 class BrokerClient(SocketClient):

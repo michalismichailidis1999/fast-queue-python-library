@@ -1,57 +1,11 @@
 import socket
-from typing import Any, Dict, Tuple
-
-import OpenSSL
-from constants import *
+from typing import Tuple
 from queue import Queue
 import ssl
+from constants import *
 
 class Socket(socket.socket):
     pass
-
-def load_p12_and_verify(context: ssl.SSLContext, path: str, password: str = None):
-    try:
-        # Load the PKCS#12 file
-        with open(path, "rb") as f:
-            p12 = OpenSSL.crypto.load_pkcs12(
-                f.read(), password.encode() if password else None
-            )
-
-            # Extract the client certificate and private key
-            client_cert = p12.get_certificate()
-            private_key = p12.get_privatekey()
-
-            # Check for CA certificates
-            ca_certs = p12.get_ca_certificates()
-
-            if not client_cert:
-                raise Exception("No client certificate found in PKCS#12 file.")
-
-            # Load the client certificate and private key into the SSL context
-            context.load_cert_chain(
-                certfile=OpenSSL.crypto.dump_certificate(
-                    OpenSSL.crypto.FILETYPE_PEM, client_cert
-                ).decode("utf-8"),
-                keyfile=OpenSSL.crypto.dump_privatekey(
-                    OpenSSL.crypto.FILETYPE_PEM, private_key
-                ).decode("utf-8"),
-            )
-
-            print("here")
-
-            # Load CA certificates into the context
-            if ca_certs:
-                for ca_cert in ca_certs:
-                    context.load_verify_locations(
-                        cadata=OpenSSL.crypto.dump_certificate(
-                            OpenSSL.crypto.FILETYPE_PEM, ca_cert
-                        ).decode("utf-8")
-                    )
-            else:
-                raise Exception("No CA certificates found in PKCS#12 file.")
-    except Exception as e:
-        raise Exception(f"Could not load certificate. {e}")
-
 
 class SocketConnection:
 
@@ -63,6 +17,9 @@ class SocketConnection:
         port: int,
         timeoutms: int,
         is_connected: bool = True,
+        root_cert: str = None,
+        cert: str = None,
+        cert_key: str = None,
     ) -> None:
         self.sock: Socket = sock
         self.ssock: ssl.SSLSocket = ssl_sock
@@ -71,6 +28,9 @@ class SocketConnection:
         self.port: int = port
         self.timeoutms: int = timeoutms
         self.has_ssl_connection = self.ssock is not None
+        self.root_cert: str = root_cert
+        self.cert: str = cert
+        self.cert_key: str = cert_key
 
     def reconnect(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -80,41 +40,53 @@ class SocketConnection:
             self.sock.settimeout(self.timeoutms / 1000)
 
         if self.has_ssl_connection:
-            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
 
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
+            context.load_verify_locations(self.root_cert)
+
+            if self.cert and self.cert_key:
+                context.load_cert_chain(
+                    certfile=self.cert,
+                    keyfile=self.cert_key,
+                )
 
             self.ssock = context.wrap_socket(self.sock, server_hostname=self.ip_address)
-
-            cert = self.ssock.getpeercert()
 
             if self.ssock.getpeercert() is None:
                 raise ssl.SSLError("Failed to retrieve server certificate")
 
     def close(self):
         try:
-            self.ssock.close()
+            (self.sock if not self.has_ssl_connection else self.ssock).close()
         except Exception as e:
             print(f"Could not close socket connection. {e}")
         finally:
             self.is_connected = False
 
     def send_bytes(self, req: bytes):
-        self.sock.sendall(req)
+        (self.sock if not self.has_ssl_connection else self.ssock).sendall(req)
 
     def receive_bytes(self) -> bytes:
-        return self.sock.recv(1024)
+        return (self.sock if not self.has_ssl_connection else self.ssock).recv(1024)
 
 
 class SocketClientConf:
 
     def __init__(
-        self, retries: int = 0, timeoutms: int = None, use_https: bool = False
+        self,
+        retries: int = 0,
+        timeoutms: int = None,
+        use_https: bool = False,
+        root_cert: str = None,
+        cert: str = None,
+        cert_key: str = None,
     ) -> None:
         self.retries:int = retries
         self.timeoutms = timeoutms
         self.use_https: bool = use_https
+        self.root_cert: str = root_cert
+        self.cert: str = cert
+        self.cert_key: str = cert_key
 
 
 class SocketClient:
@@ -136,15 +108,13 @@ class SocketClient:
         if self.conf.use_https:
             context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
 
-            context.load_verify_locations(
-                "C:\\Users\\Windows\\.ssh\\message_broker_certs\\ca.crt"
-            )
+            context.load_verify_locations(self.conf.root_cert)
 
-            # use for mutual tls
-            # context.load_cert_chain(
-            #     certfile="C:\\Users\\Windows\\.ssh\\message_broker_certs\\client.crt",
-            #     keyfile="C:\\Users\\Windows\\.ssh\\message_broker_certs\\client.key",
-            # )
+            if self.conf.cert and self.conf.cert_key:
+                context.load_cert_chain(
+                    certfile=self.conf.cert,
+                    keyfile=self.conf.cert_key,
+                )
 
             ssock = context.wrap_socket(sock, server_hostname=ip_address)
 
