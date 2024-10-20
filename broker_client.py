@@ -37,6 +37,9 @@ class BrokerClient(SocketClient):
         super().__init__(ip_address, port, conf)
 
     def create_queue(self, queue: str, partitions: int = 1) -> None:
+        if not queue:
+            raise ValueError("Empty queue name was passed as argument")
+
         res = self.send_request(
             self.create_request(
                 CREATE_QUEUE, [(QUEUE_NAME, queue), (PARTITIONS, partitions)]
@@ -54,6 +57,9 @@ class BrokerClient(SocketClient):
             print(f"Queue {queue} created successfully")
 
     def delete_queue(self, queue: str) -> None:
+        if not queue:
+            raise ValueError("Empty queue name was passed as argument")
+
         res = self.send_request(
             self.create_request(DELETE_QUEUE, [(QUEUE_NAME, queue)])
         )

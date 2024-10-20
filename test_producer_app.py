@@ -5,8 +5,8 @@ from models import Message
 broker_conf = BrokerClientConf(
     retries=3,
     timeoutms=None,
-    use_https=True,
-    root_cert="C:\\Users\\Windows\\.ssh\\message_broker_certs\\ca.crt",
+    # use_https=True,
+    # root_cert="C:\\Users\\Windows\\.ssh\\message_broker_certs\\ca.crt",
     # cert="C:\\Users\\Windows\\.ssh\\message_broker_certs\\client.crt",
     # cert_key="C:\\Users\\Windows\\.ssh\\message_broker_certs\\client.key",
 )
@@ -23,6 +23,10 @@ producer = Producer(client=client, conf=producer_conf)
 
 while True:
     message = input("Enter a message (type 'exit' to stop): ")
+
+    if not message:
+        print("Cannot produce empty message")
+        continue
 
     if message == "exit":
         break

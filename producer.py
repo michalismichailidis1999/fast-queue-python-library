@@ -90,7 +90,7 @@ class Producer:
                 self.partitions[partition] = []
 
             self.partitions[partition].append((message, on_delivery))
-            self.total_bytes_cached += len(message.get_total_bytes())
+            self.total_bytes_cached += message.get_total_bytes()
         except Exception as e:
             ex = e
         finally:
