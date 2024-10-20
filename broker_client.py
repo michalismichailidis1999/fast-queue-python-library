@@ -12,6 +12,10 @@ class BrokerClientConf(SocketClientConf):
         root_cert: str = None,
         cert: str = None,
         cert_key: str = None,
+        sasl_enabled: bool = False,
+        sasl_auth_method: str = None,
+        sasl_username: str = None,
+        sasl_password: str = None,
     ) -> None:
         super().__init__(
             retries=retries,
@@ -20,6 +24,10 @@ class BrokerClientConf(SocketClientConf):
             root_cert=root_cert,
             cert=cert,
             cert_key=cert_key,
+            sasl_enabled=sasl_enabled,
+            sasl_auth_method=sasl_auth_method,
+            sasl_username=sasl_username,
+            sasl_password=sasl_password,
         )
 
 
@@ -90,6 +98,14 @@ class BrokerClient(SocketClient):
                     req_bytes += reqValKey.to_bytes(
                         length=4, byteorder=ENDIAS
                     ) + self.__val_to_bytes(val)
+
+        if self.conf.sasl_enabled and self.conf.sasl_auth_method == SASL_BASIC_AUTH:
+            req_bytes += (
+                USERNAME.to_bytes(length=4, byteorder=ENDIAS)
+                + self.__val_to_bytes(self.conf.sasl_username)
+                + PASSWORD.to_bytes(length=4, byteorder=ENDIAS)
+                + self.__val_to_bytes(self.conf.sasl_password)
+            )
 
         return req_bytes
 

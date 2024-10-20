@@ -80,6 +80,10 @@ class SocketClientConf:
         root_cert: str = None,
         cert: str = None,
         cert_key: str = None,
+        sasl_enabled: bool = False,
+        sasl_auth_method: str = None,
+        sasl_username: str = None,
+        sasl_password: str = None,
     ) -> None:
         self.retries:int = retries
         self.timeoutms = timeoutms
@@ -87,6 +91,10 @@ class SocketClientConf:
         self.root_cert: str = root_cert
         self.cert: str = cert
         self.cert_key: str = cert_key
+        self.sasl_enabled: bool = sasl_enabled
+        self.sasl_auth_method: str = sasl_auth_method
+        self.sasl_username: str = sasl_username
+        self.sasl_password: str = sasl_password
 
 
 class SocketClient:
