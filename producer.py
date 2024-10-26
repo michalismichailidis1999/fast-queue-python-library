@@ -154,12 +154,12 @@ class Producer:
                     finally:
                         for message, cb in self.partitions[partition]:
                             try:
-                                flushed_bytes += message.get_total_bytes()
-                                cb(partition_ex, message)
+                                message_bytes: int = message.get_total_bytes()
+                                flushed_bytes += message_bytes
+                                if cb != None:
+                                    cb(partition_ex, message, message_bytes)
                             except Exception as e:
-                                print(
-                                    f"Error occured while executing on_delivery callback. {e}"
-                                )
+                                print(f"Error occured flushing messages. {e}")
 
                     print(f"Flushed {flushed_bytes} bytes from partition {partition}")
 
