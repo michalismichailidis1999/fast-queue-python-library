@@ -4,6 +4,34 @@ from queue import Queue
 import ssl
 from constants import *
 
+
+class SocketClientConf:
+
+    def __init__(
+        self,
+        retries: int = 0,
+        timeoutms: int = None,
+        ssl_enable: bool = False,
+        root_cert: str = None,
+        cert: str = None,
+        cert_key: str = None,
+        sasl_enable: bool = False,
+        sasl_auth_method: str = None,
+        sasl_username: str = None,
+        sasl_password: str = None,
+    ) -> None:
+        self.retries: int = retries
+        self.timeoutms = timeoutms
+        self.ssl_enable: bool = ssl_enable
+        self.root_cert: str = root_cert
+        self.cert: str = cert
+        self.cert_key: str = cert_key
+        self.sasl_enable: bool = sasl_enable
+        self.sasl_auth_method: str = sasl_auth_method
+        self.sasl_username: str = sasl_username
+        self.sasl_password: str = sasl_password
+
+
 class Socket(socket.socket):
     pass
 
@@ -69,34 +97,6 @@ class SocketConnection:
     def receive_bytes(self) -> bytes:
         return (self.sock if not self.has_ssl_connection else self.ssock).recv(1024)
 
-
-class SocketClientConf:
-
-    def __init__(
-        self,
-        retries: int = 0,
-        timeoutms: int = None,
-        use_https: bool = False,
-        root_cert: str = None,
-        cert: str = None,
-        cert_key: str = None,
-        sasl_enabled: bool = False,
-        sasl_auth_method: str = None,
-        sasl_username: str = None,
-        sasl_password: str = None,
-    ) -> None:
-        self.retries:int = retries
-        self.timeoutms = timeoutms
-        self.use_https: bool = use_https
-        self.root_cert: str = root_cert
-        self.cert: str = cert
-        self.cert_key: str = cert_key
-        self.sasl_enabled: bool = sasl_enabled
-        self.sasl_auth_method: str = sasl_auth_method
-        self.sasl_username: str = sasl_username
-        self.sasl_password: str = sasl_password
-
-
 class SocketClient:
     def __init__(self, ip_address:str, port:int, conf:SocketClientConf) -> None:
         self.pool: Queue[SocketConnection] = Queue()
@@ -113,7 +113,7 @@ class SocketClient:
 
         ssock: ssl.SSLSocket = None
 
-        if self.conf.use_https:
+        if self.conf.ssl_enable:
             context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
 
             context.load_verify_locations(self.conf.root_cert)
