@@ -99,7 +99,7 @@ class BrokerClient(SocketClient):
                         length=4, byteorder=ENDIAS
                     ) + self.__val_to_bytes(val)
 
-        if self.conf.sasl_enabled and self.conf.sasl_auth_method == SASL_BASIC_AUTH:
+        if self.conf.sasl_enable and self.conf.sasl_auth_method == SASL_BASIC_AUTH:
             req_bytes += (
                 USERNAME.to_bytes(length=4, byteorder=ENDIAS)
                 + self.__val_to_bytes(self.conf.sasl_username)
