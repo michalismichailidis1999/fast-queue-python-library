@@ -1,12 +1,16 @@
-from typing import Any
+from typing import Any, Dict
 from socket_client import *
 from constants import *
+from responses import (
+    GetControllersConnectionInfoResponse,
+    GetLeaderControllerIdResponse,
+)
+import time
 
 class BrokerClientConf(SocketClientConf):
 
     def __init__(
         self,
-        retries: int = 0,
         timeoutms: int = None,
         ssl_enable: bool = False,
         root_cert: str = None,
@@ -18,7 +22,6 @@ class BrokerClientConf(SocketClientConf):
         sasl_password: str = None,
     ) -> None:
         super().__init__(
-            retries=retries,
             timeoutms=timeoutms,
             ssl_enable=ssl_enable,
             root_cert=root_cert,
@@ -35,22 +38,95 @@ class BrokerClient(SocketClient):
 
     def __init__(
         self,
-        ip_address: str = "localhost",
-        port: int = 9877,
+        controller_node: Tuple[str, int],
         conf: BrokerClientConf = None,
     ) -> None:
+        if controller_node is None:
+            raise ValueError("Controller node cannot be empty")
+
         if conf is None:
             conf = BrokerClientConf()
 
-        super().__init__(ip_address, port, conf)
+        self.controller_nodes: Dict[int, SocketClient] = {}
+        self.controller_leader: int = -1
 
-    def create_queue(self, queue: str, partitions: int = 1) -> None:
+        controller_conn = SocketClient(controller_node[0], controller_node[1], conf)
+
+        retries = 0
+        err: Exception = None
+
+        controllers_connection_res: GetControllersConnectionInfoResponse = None
+
+        while retries < 3:
+            try:
+                res = (
+                    GetControllersConnectionInfoResponse(
+                        controller_conn.send_request(
+                            self.create_request(GET_CONTROLLERS_CONNECTION_INFO)
+                        )
+                    )
+                    if controllers_connection_res is None
+                    else controllers_connection_res
+                )
+
+                if controllers_connection_res is None:
+                    controllers_connection_res = res
+                    for controller in res.controller_nodes:
+                        if (
+                            controller.address == controller_node[0]
+                            and controller.port == controller_node[1]
+                        ):
+                            self.controller_nodes[controller.node_id] = controller_conn
+                        elif controller.node_id in self.controller_nodes:
+                            continue
+                        else:
+                            self.controller_nodes[controller.node_id] = SocketClient(
+                                controller.address, controller.port, conf
+                            )
+
+                if res.leader_id in self.controller_nodes:
+                    self.controller_leader = res.leader_id
+                    break
+
+                leader_res = GetLeaderControllerIdResponse(
+                    controller_conn.send_request(
+                        self.create_request(GET_CONTROLLER_LEADER_ID)
+                    )
+                )
+
+                controllers_connection_res.leader_id = leader_res.leader_id
+
+                time.sleep(1000)
+
+                err = None
+            except RetryableException as e:
+                retries += 1
+                print(f"Error occurred. Reason: {e}. Retry {retries} of 3")
+                err = e
+            except Exception as e:
+                raise Exception(f"{e}")
+
+        if err is not None:
+            raise err
+
+        print(
+            f"Connected successfully to controller quorum leader {self.controller_leader}"
+        )
+
+    def create_queue(
+        self, queue: str, partitions: int = 1, replication_factor: int = 1
+    ) -> None:
         if not queue:
             raise ValueError("Empty queue name was passed as argument")
 
         res = self.send_request(
             self.create_request(
-                CREATE_QUEUE, [(QUEUE_NAME, queue), (PARTITIONS, partitions)]
+                CREATE_QUEUE,
+                [
+                    (QUEUE_NAME, queue),
+                    (PARTITIONS, partitions),
+                    (REPLICATION_FACTOR, replication_factor),
+                ],
             )
         )
 
@@ -107,7 +183,7 @@ class BrokerClient(SocketClient):
                 + self.__val_to_bytes(self.conf.sasl_password)
             )
 
-        return req_bytes
+        return len(req_bytes).to_bytes(length=4, byteorder=ENDIAS) + req_bytes
 
     def __val_to_bytes(self, val: Any) -> bytes:
         if isinstance(val, int):

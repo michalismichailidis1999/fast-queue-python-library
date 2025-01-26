@@ -3,13 +3,12 @@ from typing import Tuple
 from queue import Queue
 import ssl
 from constants import *
-
+from exceptions import RetryableException
 
 class SocketClientConf:
 
     def __init__(
         self,
-        retries: int = 0,
         timeoutms: int = None,
         ssl_enable: bool = False,
         root_cert: str = None,
@@ -20,7 +19,6 @@ class SocketClientConf:
         sasl_username: str = None,
         sasl_password: str = None,
     ) -> None:
-        self.retries: int = retries
         self.timeoutms = timeoutms
         self.ssl_enable: bool = ssl_enable
         self.root_cert: str = root_cert
@@ -41,7 +39,7 @@ class SocketConnection:
         self,
         sock: Socket,
         ssl_sock: ssl.SSLSocket,
-        ip_address: str,
+        address: str,
         port: int,
         timeoutms: int,
         is_connected: bool = True,
@@ -52,7 +50,7 @@ class SocketConnection:
         self.sock: Socket = sock
         self.ssock: ssl.SSLSocket = ssl_sock
         self.is_connected: bool = is_connected
-        self.ip_address: str = ip_address
+        self.address: str = address
         self.port: int = port
         self.timeoutms: int = timeoutms
         self.has_ssl_connection = self.ssock is not None
@@ -62,7 +60,7 @@ class SocketConnection:
 
     def reconnect(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.connect((self.ip_address, self.port))
+        self.sock.connect((self.address, self.port))
 
         if self.timeoutms is not None:
             self.sock.settimeout(self.timeoutms / 1000)
@@ -78,7 +76,7 @@ class SocketConnection:
                     keyfile=self.cert_key,
                 )
 
-            self.ssock = context.wrap_socket(self.sock, server_hostname=self.ip_address)
+            self.ssock = context.wrap_socket(self.sock, server_hostname=self.address)
 
             if self.ssock.getpeercert() is None:
                 raise ssl.SSLError("Failed to retrieve server certificate")
@@ -95,18 +93,24 @@ class SocketConnection:
         (self.sock if not self.has_ssl_connection else self.ssock).sendall(req)
 
     def receive_bytes(self) -> bytes:
-        return (self.sock if not self.has_ssl_connection else self.ssock).recv(1024)
+        res_size = (self.sock if not self.has_ssl_connection else self.ssock).recv(8)
+
+        if res_size <= 0:
+            raise Exception("Error occurred while trying to read bytes from socket")
+
+        return (self.sock if not self.has_ssl_connection else self.ssock).recv(res_size)
 
 class SocketClient:
-    def __init__(self, ip_address:str, port:int, conf:SocketClientConf) -> None:
+
+    def __init__(self, address: str, port: int, conf: SocketClientConf) -> None:
         self.pool: Queue[SocketConnection] = Queue()
         self.conf = conf
-        self.add_connection(ip_address=ip_address, port=port)
+        self.add_connection(ip_address=address, port=port)
 
-    def add_connection(self, ip_address: str, port: int):
+    def add_connection(self, address: str, port: int):
         # Create a TCP/IP socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect((ip_address, port))
+        sock.connect((address, port))
 
         if self.conf.timeoutms is not None:
             sock.settimeout(self.conf.timeoutms / 1000)
@@ -124,7 +128,7 @@ class SocketClient:
                     keyfile=self.conf.cert_key,
                 )
 
-            ssock = context.wrap_socket(sock, server_hostname=ip_address)
+            ssock = context.wrap_socket(sock, server_hostname=address)
 
             if ssock.getpeercert() is None:
                 raise ssl.SSLError("Failed to retrieve server certificate")
@@ -132,7 +136,7 @@ class SocketClient:
         conn: SocketConnection = SocketConnection(
             sock=sock,
             ssl_sock=ssock,
-            ip_address=ip_address,
+            address=address,
             port=port,
             timeoutms=self.conf.timeoutms,
             is_connected=True,
@@ -141,65 +145,65 @@ class SocketClient:
         self.pool.put(conn)
 
     def send_request(self, req: bytes) -> bytes:
-        conn = self.pool.get()
+        conn: SocketConnection = None
+
+        try:
+            conn = self.pool.get(
+                block=True, timeout=int(self.conf.timeoutms / 1000) + 1
+            )
+        except:
+            raise RetryableException(
+                error_code=CONNECTION_ERROR,
+                error_message="No available connection to send request",
+            )
 
         if not conn.is_connected:
             reconnected = self.try_reconnect(conn=conn)
 
             if not reconnected:
-                raise Exception("Could not connect to broker")
+                raise RetryableException(
+                    error_code=CONNECTION_ERROR,
+                    error_message="Could not reconnect to broker",
+                )
 
-        retries = 0
+        try:
+            # Send the message to the server
+            conn.send_bytes(req)
 
-        while retries < self.conf.retries:
-            try:
-                if retries >= 1:
-                    print("Request failed. Retrying again.")
+            # Wait for the response from the server
+            response = conn.receive_bytes()
 
-                if not conn.is_connected:
-                    reconnected = self.try_reconnect(conn=conn)
-
-                    if not reconnected: return [True, "Could not connect to broker", None]
-
-                # Send the message to the server
-                conn.send_bytes(req)
-
-                # Wait for the response from the server
-                response = conn.receive_bytes()
-
-                if not response:
-                    conn.close()
-                    self.pool.put(conn)
-                    raise Exception("Connection to broker shutdown unexpectedly")
-
-                response_err = self.get_response_error(response)
-
-                if response_err[0] != NO_ERROR:
-                    if not self.is_error_retryable(response_err[0]):
-                        self.pool.put(conn)
-                        raise Exception(response_err[1])
-
-                    retries += 1
-
-                    continue
-
-                self.pool.put(conn)
-
-                return response
-            except TimeoutError:
-                retries += 1
-
-                if retries >= self.conf.retries:
-                    self.pool.put(conn)
-                    raise Exception("Request timed out")
-            except ConnectionResetError:
+            if not response or len(response) == 0:
                 conn.close()
                 self.pool.put(conn)
-                raise Exception("Connection to broker shut down unexpectedly")
-            except Exception as e:
-                conn.close()
+                raise RetryableException(
+                    error_code=CONNECTION_ERROR,
+                    error_message="Could not receive response from the socket connection",
+                )
+
+            response_err = self.get_response_error(response)
+
+            if response_err[0] != NO_ERROR:
                 self.pool.put(conn)
-                raise e
+
+                if self.__is_error_retryable(response_err[0]):
+                    raise RetryableException(
+                        error_code=response_err[0], error_message=response_err[1]
+                    )
+
+                raise Exception(response_err[1])
+
+            return response
+        except TimeoutError:
+            self.pool.put(conn)
+            raise RetryableException(
+                error_code=TIMEOUT_ERROR,
+                error_message="Waiting for response timed out",
+            )
+        except Exception as e:
+            conn.close()
+            self.pool.put(conn)
+            raise e
 
     def try_reconnect(self, conn: SocketConnection) -> bool:
         try:
@@ -214,12 +218,8 @@ class SocketClient:
             res[4:].decode() if len(res) > 4 else "Internal server error",
         ]
 
-    def is_error_retryable(self, error_type: int) -> bool:
-        return error_type in [
-            NOT_LEADER_FOR_PARTITION, 
-            UNKNOWN_QUEUE_OR_PARTITION, 
-            REQUEST_TIMED_OUT
-        ]
+    def __is_error_retryable(self, error_code: int):
+        return error_code in [CONNECTION_ERROR, TIMEOUT_ERROR]
 
     def close(self):
         while self.pool.empty():
