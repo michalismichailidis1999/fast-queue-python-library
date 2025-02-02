@@ -4,6 +4,7 @@ from constants import *
 from responses import (
     GetControllersConnectionInfoResponse,
     GetLeaderControllerIdResponse,
+    CreateQueueResponse,
 )
 import time
 
@@ -127,25 +128,25 @@ class BrokerClient(SocketClient):
         if not queue:
             raise ValueError("Empty queue name was passed as argument")
 
-        res = self.send_request(
-            self.create_request(
-                CREATE_QUEUE,
-                [
-                    (QUEUE_NAME, queue),
-                    (PARTITIONS, partitions),
-                    (REPLICATION_FACTOR, replication_factor),
-                ],
+        leader = self.controller_nodes[self.controller_leader]
+
+        res = CreateQueueResponse(
+            leader.send_request(
+                self.create_request(
+                    CREATE_QUEUE,
+                    [
+                        (QUEUE_NAME, queue),
+                        (PARTITIONS, partitions),
+                        (REPLICATION_FACTOR, replication_factor),
+                    ],
+                )
             )
         )
 
-        queue_created: bool = (
-            int.from_bytes(bytes=res[4:5], byteorder=ENDIAS) - ord("B") == 0
-        )
-
-        if queue_created:
-            print(f"Queue {queue} already exists")
+        if res.success:
+            print(f"Queue {queue} created")
         else:
-            print(f"Queue {queue} created successfully")
+            print(f"Queue {queue} failed to be created")
 
     def delete_queue(self, queue: str) -> None:
         if not queue:

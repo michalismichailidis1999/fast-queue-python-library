@@ -5,40 +5,56 @@ from constants import *
 def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
     total_bytes = len(res_bytes)
 
-    offset = 4  # error code size
+    offset = INT_SIZE  # error code size
 
     field_values: Dict[str, Any] = {}
 
     while offset < total_bytes:
         res_key = int.from_bytes(
-            bytes=res_bytes[offset : (offset + 4)], byteorder=ENDIAS, signed=False
+            bytes=res_bytes[offset : (offset + INT_SIZE)],
+            byteorder=ENDIAS,
+            signed=False,
         )
 
         if res_key not in fields:
             raise Exception(f"Incorrect response key {res_key}")
 
-        offset += 4
+        offset += INT_SIZE
 
-        if res_key == LEADER_ID:
-            field_values["leader_id"] = int.from_bytes(
-                bytes=res_bytes[offset : (offset + 4)], byteorder=ENDIAS, signed=False
+        if res_key == OK:
+            field_values["success"] = bool.from_bytes(
+                bytes=res_bytes[offset : (offset + BOOL_SIZE)],
+                byteorder=ENDIAS,
+                signed=False,
             )
 
-            offset += 4
+            offset += BOOL_SIZE
+        elif res_key == LEADER_ID:
+            field_values["leader_id"] = int.from_bytes(
+                bytes=res_bytes[offset : (offset + INT_SIZE)],
+                byteorder=ENDIAS,
+                signed=False,
+            )
+
+            offset += INT_SIZE
         elif res_key == CONTROLLER_CONNECTION_INFO:
             node = {}
 
             node["node_id"] = int.from_bytes(
-                bytes=res_bytes[offset : (offset + 4)], byteorder=ENDIAS, signed=False
+                bytes=res_bytes[offset : (offset + INT_SIZE)],
+                byteorder=ENDIAS,
+                signed=False,
             )
 
-            offset += 4
+            offset += INT_SIZE
 
             address_size: int = int.from_bytes(
-                bytes=res_bytes[offset : (offset + 4)], byteorder=ENDIAS, signed=False
+                bytes=res_bytes[offset : (offset + INT_SIZE)],
+                byteorder=ENDIAS,
+                signed=False,
             )
 
-            offset += 4
+            offset += INT_SIZE
 
             node["address"] = res_bytes[offset : (offset + address_size)].decode(
                 "utf-8"
@@ -47,10 +63,12 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
             offset += address_size
 
             node["port"] = int.from_bytes(
-                bytes=res_bytes[offset : (offset + 4)], byteorder=ENDIAS, signed=False
+                bytes=res_bytes[offset : (offset + INT_SIZE)],
+                byteorder=ENDIAS,
+                signed=False,
             )
 
-            offset += 4
+            offset += INT_SIZE
 
             if "controller_nodes" not in field_values:
                 field_values["controller_nodes"] = [node]
@@ -98,3 +116,10 @@ class GetLeaderControllerIdResponse:
         res_fields = _response_fields_mapper(res_bytes, set([LEADER_ID]))
 
         self.leader_id: int = res_fields["leader_id"]
+
+
+class CreateQueueResponse:
+    def __init__(self, res_bytes: bytes):
+        res_fields = _response_fields_mapper(res_bytes, set([OK]))
+
+        self.success: bool = res_fields["success"]

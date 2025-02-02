@@ -1,4 +1,5 @@
 # Generic
+BOOL_SIZE = 1
 INT_SIZE = 4
 LONG_SIZE = 4
 
