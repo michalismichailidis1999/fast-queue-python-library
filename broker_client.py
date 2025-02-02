@@ -101,7 +101,10 @@ class BrokerClient(SocketClient):
 
                 controllers_connection_res.leader_id = leader_res.leader_id
 
-                time.sleep(1000)
+                if res.leader_id not in self.controller_nodes:
+                    print("Leader not elected yet")
+
+                time.sleep(3)
 
                 err = None
             except RetryableException as e:

@@ -172,6 +172,7 @@ class SocketClient:
             reconnected = self.try_reconnect(conn=conn)
 
             if not reconnected:
+                self.pool.put(conn)
                 raise RetryableException(
                     error_code=CONNECTION_ERROR,
                     error_message="Could not reconnect to broker",
@@ -205,6 +206,8 @@ class SocketClient:
                     )
 
                 raise Exception(res_err_message)
+
+            self.pool.put(conn)
 
             return response
         except TimeoutError:
