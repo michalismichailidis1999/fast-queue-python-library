@@ -93,19 +93,25 @@ class SocketConnection:
         (self.sock if not self.has_ssl_connection else self.ssock).sendall(req)
 
     def receive_bytes(self) -> bytes:
-        res_size = (self.sock if not self.has_ssl_connection else self.ssock).recv(8)
+        res_size = (self.sock if not self.has_ssl_connection else self.ssock).recv(
+            LONG_SIZE
+        )
 
-        if res_size <= 0:
+        if len(res_size) <= 0:
             raise Exception("Error occurred while trying to read bytes from socket")
 
-        return (self.sock if not self.has_ssl_connection else self.ssock).recv(res_size)
+        return (self.sock if not self.has_ssl_connection else self.ssock).recv(
+            int.from_bytes(bytes=res_size, byteorder=ENDIAS)
+        )
 
 class SocketClient:
 
     def __init__(self, address: str, port: int, conf: SocketClientConf) -> None:
         self.pool: Queue[SocketConnection] = Queue()
         self.conf = conf
-        self.add_connection(ip_address=address, port=port)
+        self.add_connection(
+            address=address if address != "localhost" else "127.0.0.1", port=port
+        )
 
     def add_connection(self, address: str, port: int):
         # Create a TCP/IP socket
@@ -149,7 +155,12 @@ class SocketClient:
 
         try:
             conn = self.pool.get(
-                block=True, timeout=int(self.conf.timeoutms / 1000) + 1
+                block=True,
+                timeout=(
+                    int(self.conf.timeoutms / 1000) + 1
+                    if self.conf.timeoutms is not None
+                    else None
+                ),
             )
         except:
             raise RetryableException(
@@ -181,17 +192,19 @@ class SocketClient:
                     error_message="Could not receive response from the socket connection",
                 )
 
-            response_err = self.get_response_error(response)
+            res_err_code = self.get_response_error_code(response)
 
-            if response_err[0] != NO_ERROR:
+            if res_err_code != NO_ERROR:
                 self.pool.put(conn)
 
-                if self.__is_error_retryable(response_err[0]):
+                res_err_message = self.get_response_error(response)
+
+                if self.__is_error_retryable(res_err_code):
                     raise RetryableException(
-                        error_code=response_err[0], error_message=response_err[1]
+                        error_code=res_err_code, error_message=res_err_message
                     )
 
-                raise Exception(response_err[1])
+                raise Exception(res_err_message)
 
             return response
         except TimeoutError:
@@ -212,11 +225,13 @@ class SocketClient:
         except:
             return False
 
-    def get_response_error(self, res:bytes) -> Tuple[int,str]:
-        return [
-            int.from_bytes(bytes=res[0:1], byteorder="big", signed=False),
-            res[4:].decode() if len(res) > 4 else "Internal server error",
-        ]
+    def get_response_error_code(self, res: bytes) -> int:
+        return int.from_bytes(bytes=res[:INT_SIZE], byteorder=ENDIAS)
+
+    def get_response_error(self, res: bytes) -> str:
+        return (
+            res[INT_SIZE:].decode() if len(res) > INT_SIZE else "Internal server error"
+        )
 
     def __is_error_retryable(self, error_code: int):
         return error_code in [CONNECTION_ERROR, TIMEOUT_ERROR]

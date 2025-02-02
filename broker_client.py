@@ -50,7 +50,9 @@ class BrokerClient(SocketClient):
         self.controller_nodes: Dict[int, SocketClient] = {}
         self.controller_leader: int = -1
 
-        controller_conn = SocketClient(controller_node[0], controller_node[1], conf)
+        controller_conn = SocketClient(
+            address=controller_node[0], port=controller_node[1], conf=conf
+        )
 
         retries = 0
         err: Exception = None
@@ -83,6 +85,9 @@ class BrokerClient(SocketClient):
                             self.controller_nodes[controller.node_id] = SocketClient(
                                 controller.address, controller.port, conf
                             )
+                    print("Initialized controller nodes connection info:")
+                    for node in res.controller_nodes:
+                        print(node)
 
                 if res.leader_id in self.controller_nodes:
                     self.controller_leader = res.leader_id
@@ -131,8 +136,7 @@ class BrokerClient(SocketClient):
         )
 
         queue_created: bool = (
-            int.from_bytes(bytes=res[4:5], byteorder=ENDIAS, signed=False) - ord("B")
-            == 0
+            int.from_bytes(bytes=res[4:5], byteorder=ENDIAS) - ord("B") == 0
         )
 
         if queue_created:
@@ -149,8 +153,7 @@ class BrokerClient(SocketClient):
         )
 
         queue_deleted: bool = (
-            int.from_bytes(bytes=res[4:5], byteorder=ENDIAS, signed=False) - ord("B")
-            == 0
+            int.from_bytes(bytes=res[4:5], byteorder=ENDIAS) - ord("B") == 0
         )
 
         if queue_deleted:
@@ -166,7 +169,7 @@ class BrokerClient(SocketClient):
     def create_request(
         self, req_type: int, values: list[Tuple[int, Any]] = None
     ) -> bytes:
-        req_bytes = req_type.to_bytes(length=4, byteorder=ENDIAS)
+        req_bytes = req_type.to_bytes(length=INT_SIZE, byteorder=ENDIAS)
 
         if values != None:
             for reqValKey, val in values:
@@ -175,15 +178,17 @@ class BrokerClient(SocketClient):
                         length=4, byteorder=ENDIAS
                     ) + self.__val_to_bytes(val)
 
-        if self.conf.sasl_enable and self.conf.sasl_auth_method == SASL_BASIC_AUTH:
-            req_bytes += (
-                USERNAME.to_bytes(length=4, byteorder=ENDIAS)
-                + self.__val_to_bytes(self.conf.sasl_username)
-                + PASSWORD.to_bytes(length=4, byteorder=ENDIAS)
-                + self.__val_to_bytes(self.conf.sasl_password)
-            )
+        # if self.conf.sasl_enable and self.conf.sasl_auth_method == SASL_BASIC_AUTH:
+        #     req_bytes += (
+        #         USERNAME.to_bytes(length=4, byteorder=ENDIAS)
+        #         + self.__val_to_bytes(self.conf.sasl_username)
+        #         + PASSWORD.to_bytes(length=4, byteorder=ENDIAS)
+        #         + self.__val_to_bytes(self.conf.sasl_password)
+        #     )
 
-        return len(req_bytes).to_bytes(length=4, byteorder=ENDIAS) + req_bytes
+        return (LONG_SIZE + len(req_bytes)).to_bytes(
+            length=LONG_SIZE, byteorder=ENDIAS
+        ) + req_bytes
 
     def __val_to_bytes(self, val: Any) -> bytes:
         if isinstance(val, int):

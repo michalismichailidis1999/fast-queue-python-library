@@ -1,3 +1,7 @@
+# Generic
+INT_SIZE = 4
+LONG_SIZE = 4
+
 # Request Types
 CREATE_QUEUE = 1
 DELETE_QUEUE = 2

@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Set
 from constants import *
 
 
-def __response_fields_mapper(res_bytes: bytes, fields: Set[int]):
+def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
     total_bytes = len(res_bytes)
 
     offset = 4  # error code size
@@ -66,10 +66,17 @@ class ControllerConnectionInfo:
         self.address: str = address
         self.port: int = port
 
+    def __str__(self):
+        return (
+            "{"
+            + f'"node_id": {self.node_id}, "address": "{(self.address if self.address != "127.0.0.1" else "localhost")}:{self.port}"'
+            + "}"
+        )
+
 
 class GetControllersConnectionInfoResponse:
     def __init__(self, res_bytes: bytes):
-        res_fields = __response_fields_mapper(
+        res_fields = _response_fields_mapper(
             res_bytes, set([LEADER_ID, CONTROLLER_CONNECTION_INFO])
         )
 
@@ -88,6 +95,6 @@ class GetControllersConnectionInfoResponse:
 
 class GetLeaderControllerIdResponse:
     def __init__(self, res_bytes: bytes):
-        res_fields = __response_fields_mapper(res_bytes, set([LEADER_ID]))
+        res_fields = _response_fields_mapper(res_bytes, set([LEADER_ID]))
 
         self.leader_id: int = res_fields["leader_id"]

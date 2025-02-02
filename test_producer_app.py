@@ -27,11 +27,11 @@ broker_conf = BrokerClientConf(
     # sasl_password="test",
 )
 
-client = BrokerClient(conf=broker_conf)
+client = BrokerClient(conf=broker_conf, controller_node=["127.0.0.1", 9877])
 
-queue_name = input("Enter the queue you want to produce messages to: ")
+# queue_name = input("Enter the queue you want to produce messages to: ")
 
-client.create_queue(queue=queue_name, partitions=1)
+# client.create_queue(queue=queue_name, partitions=1)
 
 # producer_conf = ProducerConf(queue=queue_name, wait_ms=1000, max_batch_size=16384)
 
