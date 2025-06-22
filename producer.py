@@ -5,6 +5,7 @@ import threading
 import time
 import mmh3
 import random
+from socket_client import SocketClient
 
 class ProducerConf:
 
@@ -34,12 +35,13 @@ class Producer:
         self.conf: ProducerConf = conf
 
         self.partitions: Dict[
-            int, list[(bytes, bytes, Callable[[Exception, bytes, int], None])]
+            int, list[(bytes, bytes, Callable[[Exception, bytes, bytes, int], None])]
         ] = {}
         self.total_bytes_cached = 0
 
         self.messages_mut: threading.Lock = threading.Lock()
         self.partitions_mut: threading.Lock = threading.Lock()
+        self.partitions_info_mut: threading.Lock = threading.Lock()
 
         self.__send_messages_in_batches: bool = self.conf.wait_ms > 0
         self.__prev_partition_sent: int = -1
@@ -47,9 +49,7 @@ class Producer:
 
         self.__stopped: bool = False
 
-        # TODO: Get queue info
-
-        self.__total_partitions = 1
+        self.__retrieve_queue_partitions_info()
 
         if self.conf.wait_ms > 0:
             t = threading.Thread(target=self.__flush_messages_batch, daemon=True)
@@ -59,18 +59,31 @@ class Producer:
             f"Producer initialized for queue {self.conf.queue}"
         )
 
+    def __retrieve_queue_partitions_info(self):
+        self.partitions_info_mut.acquire()
+
+        try:
+            self.__total_partitions = 0
+            self.__partitions_clients: Dict[int, SocketClient] = {}
+
+            # TODO: Complete this function's logic
+        except Exception as e:
+            pass
+        finally:
+            self.partitions_info_mut.release()
+
     def produce(
         self,
         message: str,
         key: str = None,
         on_delivery: Callable[[Exception, bytes, int], None] = None,
     ) -> None:
-        if message == None or message == "":
+        if message is None or message == "":
             raise ValueError("Message was empty")
         
-        self.__produce(message=message.encode(), key=key, on_delivery=on_delivery)
+        self.__produce(message=message.encode(), key=(key.encode() if key is not None and key != "" else None), on_delivery=on_delivery)
 
-    def __produce(
+    def produce(
         self,
         message: bytes,
         key: bytes, 
@@ -122,8 +135,15 @@ class Producer:
                     partition_ex: Exception = None
                     flushed_bytes: int = 0
 
+                    self.partitions_info_mut.acquire()
+
                     try:
-                        self.client.send_request(
+                        if partition not in self.__partitions_clients:
+                            raise Exception(f"Error in partition {partition} connection pool retrieval")
+                        
+                        partition_client = self.__partitions_clients[partition]
+
+                        partition_client.send_request(
                             self.client.create_request(
                                 PRODUCE,
                                 [
@@ -139,14 +159,16 @@ class Producer:
                     except Exception as e:
                         partition_ex = e
                     finally:
-                        for message, cb in self.partitions[partition]:
+                        self.partitions_info_mut.release()
+
+                        for message, key, cb in self.partitions[partition]:
                             try:
                                 message_bytes: int = message.get_total_bytes()
                                 flushed_bytes += message_bytes
                                 if cb != None:
-                                    cb(partition_ex, message, message_bytes)
+                                    cb(partition_ex, message, key, message_bytes)
                             except Exception as e:
-                                print(f"Error occured flushing messages. {e}")
+                                print(f"Error occured while executing message callback. {e}")
 
                     print(f"Flushed {flushed_bytes} bytes from partition {partition}")
 

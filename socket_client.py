@@ -157,7 +157,6 @@ class SocketClient:
             address=address,
             port=port,
             timeoutms=self.conf.timeoutms,
-            is_connected=True,
             root_cert=self.conf.root_cert,
             cert=self.conf.cert,
             cert_key=self.conf.cert_key,
@@ -272,10 +271,13 @@ class SocketClient:
 
     def __keep_pool_connections_to_maximum(self):
         while not self.__stopped:
-            time.sleep(5)
             qsize = self.pool.qsize()
             for _ in range(qsize, self.conf.max_pool_connections + 1):
                 self.add_connection(self.address, self.port)
+
+            if self.__stopped: break
+            
+            time.sleep(5)
 
     def __del__(self):
         self.close()

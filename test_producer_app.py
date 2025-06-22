@@ -17,8 +17,8 @@ def on_delivery_callback(exception: Exception, message: bytes, key: bytes, messa
 
 
 broker_conf = BrokerClientConf(
-    timeoutms=None,
-    ssl_enable=False,
+    # timeoutms=None,
+    # ssl_enable=False,
     # root_cert="C:\\Users\\Windows\\.ssh\\message_broker_certs\\ca.crt",
     # cert="C:\\Users\\Windows\\.ssh\\message_broker_certs\\client.crt",
     # cert_key="C:\\Users\\Windows\\.ssh\\message_broker_certs\\client.key",
