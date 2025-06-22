@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 from socket_client import *
 from constants import *
 from responses import (
@@ -12,13 +12,12 @@ class BrokerClientConf(SocketClientConf):
 
     def __init__(
         self,
-        timeoutms: int = None,
+        timeoutms: int = 0,
         ssl_enable: bool = False,
         root_cert: str = None,
         cert: str = None,
         cert_key: str = None,
         sasl_enable: bool = False,
-        sasl_auth_method: str = None,
         sasl_username: str = None,
         sasl_password: str = None,
     ) -> None:
@@ -29,7 +28,6 @@ class BrokerClientConf(SocketClientConf):
             cert=cert,
             cert_key=cert_key,
             sasl_enable=sasl_enable,
-            sasl_auth_method=sasl_auth_method,
             sasl_username=sasl_username,
             sasl_password=sasl_password,
         )
@@ -55,12 +53,11 @@ class BrokerClient(SocketClient):
             address=controller_node[0], port=controller_node[1], conf=conf
         )
 
-        retries = 0
-        err: Exception = None
+        retries = 5
 
         controllers_connection_res: GetControllersConnectionInfoResponse = None
 
-        while retries < 3:
+        while retries > 0:
             try:
                 res = (
                     GetControllersConnectionInfoResponse(
@@ -74,6 +71,7 @@ class BrokerClient(SocketClient):
 
                 if controllers_connection_res is None:
                     controllers_connection_res = res
+
                     for controller in res.controller_nodes:
                         if (
                             controller.address == controller_node[0]
@@ -86,7 +84,9 @@ class BrokerClient(SocketClient):
                             self.controller_nodes[controller.node_id] = SocketClient(
                                 controller.address, controller.port, conf
                             )
+
                     print("Initialized controller nodes connection info:")
+
                     for node in res.controller_nodes:
                         print(node)
 
@@ -105,18 +105,10 @@ class BrokerClient(SocketClient):
                 if res.leader_id not in self.controller_nodes:
                     print("Leader not elected yet")
 
+                retries -= 1
                 time.sleep(3)
-
-                err = None
-            except RetryableException as e:
-                retries += 1
-                print(f"Error occurred. Reason: {e}. Retry {retries} of 3")
-                err = e
             except Exception as e:
                 raise Exception(f"{e}")
-
-        if err is not None:
-            raise err
 
         print(
             f"Connected successfully to controller quorum leader {self.controller_leader}"
@@ -146,7 +138,7 @@ class BrokerClient(SocketClient):
         if res.success:
             print(f"Queue {queue} created")
         else:
-            print(f"Queue {queue} failed to be created")
+            print(f"Creation of queue {queue} failed")
 
     def delete_queue(self, queue: str) -> None:
         if not queue:
@@ -165,11 +157,6 @@ class BrokerClient(SocketClient):
         else:
             print(f"Queue {queue} deleted successfully")
 
-    def list_queues(self) -> list[str]:
-        res = self.send_request(self.create_request(LIST_QUEUES))
-
-        print("Queues: ", res[4:].decode())
-
     def create_request(
         self, req_type: int, values: list[Tuple[int, Any]] = None
     ) -> bytes:
@@ -182,7 +169,7 @@ class BrokerClient(SocketClient):
                         length=4, byteorder=ENDIAS
                     ) + self.__val_to_bytes(val)
 
-        # if self.conf.sasl_enable and self.conf.sasl_auth_method == SASL_BASIC_AUTH:
+        # if self.conf.sasl_enable:
         #     req_bytes += (
         #         USERNAME.to_bytes(length=4, byteorder=ENDIAS)
         #         + self.__val_to_bytes(self.conf.sasl_username)

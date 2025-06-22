@@ -1,10 +1,8 @@
 from typing import Callable, Dict
 from broker_client import *
 from constants import *
-from uuid import uuid4
 import threading
 import time
-from models import Message
 import mmh3
 import random
 
@@ -13,70 +11,72 @@ class ProducerConf:
     """
     :param str queue: Name of the queue in which the producer will produce messages to.
     :param int wait_ms: Milliseconds to wait before sending the messages batch.
-    :param int max_batch_size: Maximum batch size in bytes producer can hold locally before sending it to broker (if wait_ms > 0).
-    :raise BadValueError: If invalid argument is passed or incorrect value type is passed.
+    :param int max_batch_size: Maximum batch size in bytes producer can hold locally before sending it to broker (if wait_ms > 0) (default value 16KB).
+    :raise ValueError: If invalid argument is passed.
     """
 
-    def __init__(self, queue: str, **kwargs) -> None:
+    def __init__(self, queue: str, wait_ms: int = None, max_batch_size: int = 16384) -> None:
+        if wait_ms is not None and wait_ms < 0:
+            raise ValueError("wait_ms cannot be less than 0")
+        
+        if max_batch_size is not None and max_batch_size < 0:
+            raise ValueError("max_batch_size cannot be less than 0")
+        
         self.queue: str = queue
-        self.wait_ms: int = (
-            0  # send immediatelly to broker, do not wait for batch to be accumulated
-        )
-        self.max_batch_size: int = 16384  # 16KB
-
-        for key, value in kwargs.items():
-            if key == "wait_ms":
-                if not isinstance(value, int):
-                    raise ValueError(f"{key} must be an integer")
-
-                self.wait_ms: int = value
-            elif key == "max_batch_size":
-                if not isinstance(value, int):
-                    raise ValueError(f"{key} must be an integer")
-
-                self.max_batch_size: int = value
-            else:
-                raise ValueError(f"Invalid argument {key}")
-
+   
+        self.max_batch_size: int = max_batch_size # default 16KB
+        self.wait_ms: int = 0 if wait_ms is None else wait_ms
 
 class Producer:
 
     def __init__(self, client: BrokerClient, conf: ProducerConf) -> None:
         self.client: BrokerClient = client
         self.conf: ProducerConf = conf
-        self.transactional_id = str(uuid4())
 
         self.partitions: Dict[
-            int, list[(Message, Callable[[Exception, Message, int], None])]
+            int, list[(bytes, bytes, Callable[[Exception, bytes, int], None])]
         ] = {}
         self.total_bytes_cached = 0
 
-        self.open_transactions: Dict[int, int] = {}
-
-        self.__connect()
-
         self.messages_mut: threading.Lock = threading.Lock()
-        self.transactions_mut: threading.Lock = threading.Lock()
         self.partitions_mut: threading.Lock = threading.Lock()
 
         self.__send_messages_in_batches: bool = self.conf.wait_ms > 0
         self.__prev_partition_sent: int = -1
         self.__seed = random.randint(100, 1000)
 
+        self.__stopped: bool = False
+
+        # TODO: Get queue info
+
+        self.__total_partitions = 1
+
         if self.conf.wait_ms > 0:
             t = threading.Thread(target=self.__flush_messages_batch, daemon=True)
             t.start()
 
         print(
-            f"Producer with transactional_id {self.transactional_id} initialized for queue {self.conf.queue}"
+            f"Producer initialized for queue {self.conf.queue}"
         )
 
     def produce(
         self,
-        message: Message,
-        on_delivery: Callable[[Exception, Message, int], None] = None,
+        message: str,
+        key: str = None,
+        on_delivery: Callable[[Exception, bytes, int], None] = None,
     ) -> None:
-        if message.payload == None or message.payload == "":
+        if message == None or message == "":
+            raise ValueError("Message was empty")
+        
+        self.__produce(message=message.encode(), key=key, on_delivery=on_delivery)
+
+    def __produce(
+        self,
+        message: bytes,
+        key: bytes, 
+        on_delivery: Callable[[Exception, bytes, int], None] = None,
+    ) -> None:
+        if message == None or len(message) == 0:
             raise ValueError("Message was empty")
 
         ex: Exception = None
@@ -84,13 +84,14 @@ class Producer:
         self.messages_mut.acquire()
 
         try:
-            partition: int = self.__get_message_partition(message)
+            partition: int = self.__get_message_partition(key)
 
             if partition not in self.partitions:
                 self.partitions[partition] = []
 
-            self.partitions[partition].append((message, on_delivery))
+            self.partitions[partition].append((message, key, on_delivery))
             self.total_bytes_cached += message.get_total_bytes()
+            self.__prev_partition_sent = partition
         except Exception as e:
             ex = e
         finally:
@@ -108,14 +109,11 @@ class Producer:
     def flush(self):
         ex: Exception = None
 
-        self.transactions_mut.acquire()
         self.messages_mut.acquire()
 
         try:
             if len(self.partitions.keys()) > 0:
                 print("Flushing messages...")
-
-                thread_id = threading.get_ident()
 
                 for partition in self.partitions.keys():
                     if len(self.partitions[partition]) == 0:
@@ -130,17 +128,6 @@ class Producer:
                                 PRODUCE,
                                 [
                                     (QUEUE_NAME, self.conf.queue),
-                                    (TRANSACTIONAL_ID, self.transactional_id),
-                                    (
-                                        TRANSACTION_ID,
-                                        (
-                                            self.open_transactions[thread_id]
-                                            if thread_id in self.open_transactions
-                                            else None
-                                        ),
-                                    ),
-                                    (PRODUCER_ID, self.id),
-                                    (PRODUCER_EPOCH, self.epoch),
                                     (PARTITION, partition),
                                 ]
                                 + [
@@ -170,65 +157,11 @@ class Producer:
         except Exception as e:
             ex = e
         finally:
-            self.transactions_mut.release()
             self.messages_mut.release()
 
-    def begin_transaction(self):
-        ex: Exception = None
-
-        self.transactions_mut.acquire()
-
-        try:
-            res = self.client.send_request(
-                self.client.create_request(
-                    BEGIN_TRANSACTION, [(TRANSACTIONAL_ID, self.transactional_id)]
-                )
-            )
-
-            thread_id = threading.get_ident()
-
-            self.open_transactions[thread_id] = int.from_bytes(
-                bytes=res[4:8], byteorder=ENDIAS, signed=False
-            )
-        except Exception as e:
-            ex = e
-        finally:
-            self.transactions_mut.release()
-
-        if ex != None:
-            raise ex
-
-    def commit_transaction(self, transaction_id: int):
-        ex: Exception = None
-
-        self.transactions_mut.acquire()
-
-        try:
-            thread_id = threading.get_ident()
-
-            if thread_id not in self.open_transactions:
-                raise ValueError("Transaction cannot be None")
-
-            transaction_id: int = self.open_transactions[thread_id]
-
-            self.client.send_request(
-                self.client.create_request(
-                    COMMIT_TRANSACTION,
-                    [
-                        (TRANSACTIONAL_ID, self.transactional_id),
-                        (TRANSACTION_ID, transaction_id),
-                    ],
-                )
-            )
-        except Exception as e:
-            ex = e
-        finally:
-            self.transactions_mut.release()
-
-        if ex != None:
-            raise ex
-
     def close(self):
+        self.__stopped = True
+
         try:
             if self.total_bytes_cached > 0:
                 print("Trying to flush remaining messages before shutdown..")
@@ -241,11 +174,11 @@ class Producer:
         print("Producer closed")
 
     def __flush_messages_batch(self):
-        while True:
+        while not self.__stopped:
             time.sleep(self.conf.wait_ms / 1000)
             self.flush()
 
-    def __get_message_partition(self, message: Message, key: Any = None) -> int:
+    def __get_message_partition(self, key: bytes = None) -> int:
         if key == None:
             ex: Exception = None
 
@@ -257,7 +190,7 @@ class Producer:
                 if partition == -1:
                     partition = 0
                 else:
-                    partition = (partition + 1) % self.__partitions
+                    partition = (partition + 1) % self.__total_partitions
             except Exception as e:
                 ex = e
             finally:
@@ -268,26 +201,7 @@ class Producer:
 
             return partition
         else:
-            return mmh3.hash(key=str(key), seed=self.__seed) % self.partitions
-
-    def __connect(self):
-        # if successfull receives back [producer_id, epoch]
-        res = self.client.send_request(
-            self.client.create_request(
-                PRODUCER_CONNECT,
-                [
-                    (TRANSACTIONAL_ID, self.transactional_id),
-                    (QUEUE_NAME, self.conf.queue),
-                ],
-            )
-        )
-
-        self.id: int = int.from_bytes(bytes=res[4:8], byteorder=ENDIAS, signed=False)
-
-        self.epoch: int = int.from_bytes(
-            bytes=res[8:12], byteorder=ENDIAS, signed=False
-        )
-
-        self.__partitions: int = int.from_bytes(
-            bytes=res[12:16], byteorder=ENDIAS, signed=False
-        )
+            return mmh3.hash(key=key, seed=self.__seed) % self.__total_partitions
+        
+    def __del__(self):
+        self.close()
