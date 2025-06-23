@@ -76,10 +76,8 @@ class BrokerClient:
         t.start()
 
     def __check_for_leader_update(self, controller_node: Tuple[str, int], retries: int, called_from_contructor: bool = False):
-        controller_conn = SocketClient(
-            address=controller_node[0], port=controller_node[1], conf=self.conf
-        )
-
+        controller_conn = SocketClient(address=controller_node[0], port=controller_node[1], conf=self.conf, max_pool_connections=1)
+    
         while not self.__stopped:
             controllers_connection_res: GetControllersConnectionInfoResponse = None
 
@@ -91,29 +89,36 @@ class BrokerClient:
                         res = (
                             GetControllersConnectionInfoResponse(
                                 controller_conn.send_request(
-                                    self.create_request(GET_CONTROLLERS_CONNECTION_INFO)
+                                    self.create_request(GET_CONTROLLERS_CONNECTION_INFO, None, False)
                                 )
                             )
                             if controllers_connection_res is None
                             else controllers_connection_res
                         )
 
+                        to_keep = set()
+
                         if controllers_connection_res is None:
                             controllers_connection_res = res
 
-                            # TODO: Update this logic when functionality to update controllers in configuration mid running is added
                             for controller in res.controller_nodes:
-                                if (
-                                    controller.address == controller_node[0]
-                                    and controller.port == controller_node[1]
-                                ):
-                                    self.controller_nodes[controller.node_id] = controller_conn
-                                elif controller.node_id in self.controller_nodes:
-                                    continue
+                                if controller.node_id in self.controller_nodes:
+                                    conn_info = self.controller_nodes[controller.node_id].get_connection_info()
+                                    if conn_info[0] != controller.address and conn_info[1] != controller.port:
+                                        del self.controller_nodes[controller.node_id]
+                                        self.controller_nodes[controller.node_id] = SocketClient(
+                                            controller.address, controller.port, conf
+                                        )
                                 else:
                                     self.controller_nodes[controller.node_id] = SocketClient(
                                         controller.address, controller.port, conf
                                     )
+
+                                to_keep.add(controller.node_id)
+
+                            for node_id in self.controller_nodes.keys():
+                                if node_id not in to_keep:
+                                    del self.controller_nodes[node_id]
 
                             if called_from_contructor:
                                 print("Initialized controller nodes connection info:")
@@ -127,7 +132,7 @@ class BrokerClient:
 
                         leader_res = GetLeaderControllerIdResponse(
                             controller_conn.send_request(
-                                self.create_request(GET_CONTROLLER_LEADER_ID)
+                                self.create_request(GET_CONTROLLER_LEADER_ID, None, False)
                             )
                         )
 
@@ -159,66 +164,83 @@ class BrokerClient:
         if not queue:
             raise ValueError("Empty queue name was passed as argument")
 
-        leader = self.controller_nodes[self.controller_leader]
+        self.controllers_mut.acquire()
 
-        res = CreateQueueResponse(
-            leader.send_request(
-                self.create_request(
-                    CREATE_QUEUE,
-                    [
-                        (QUEUE_NAME, queue),
-                        (PARTITIONS, partitions),
-                        (REPLICATION_FACTOR, replication_factor),
-                    ],
+        try:
+            leader = self.controller_nodes[self.controller_leader]
+
+            res = CreateQueueResponse(
+                leader.send_request(
+                    self.create_request(
+                        CREATE_QUEUE,
+                        [
+                            (QUEUE_NAME, queue),
+                            (PARTITIONS, partitions),
+                            (REPLICATION_FACTOR, replication_factor),
+                        ],
+                        True,
+                    )
                 )
             )
-        )
 
-        if res.success:
-            print(f"Queue {queue} created")
-        else:
-            print(f"Creation of queue {queue} failed")
+            if res.success:
+                print(f"Queue {queue} created")
+            else:
+                print(f"Creation of queue {queue} failed")
+        except Exception as e:
+            print(f"Error occured while trying to create queue {queue}. {e}")
+        finally:
+            self.controllers_mut.release()
 
     def delete_queue(self, queue: str) -> None:
         if not queue:
             raise ValueError("Empty queue name was passed as argument")
+        
+        self.controllers_mut.acquire()
 
-        res = self.send_request(
-            self.create_request(DELETE_QUEUE, [(QUEUE_NAME, queue)])
-        )
+        try:
+            leader = self.controller_nodes[self.controller_leader]
 
-        queue_deleted: bool = (
-            int.from_bytes(bytes=res[4:5], byteorder=ENDIAS) - ord("B") == 0
-        )
+            res = CreateQueueResponse(
+                leader.send_request(
+                    self.create_request(
+                        CREATE_QUEUE,
+                        [
+                            (QUEUE_NAME, queue),
+                        ],
+                        True
+                    )
+                )
+            )
 
-        if queue_deleted:
-            print(f"Queue {queue} does not exist")
-        else:
-            print(f"Queue {queue} deleted successfully")
+            if res.success:
+                print(f"Queue {queue} deleted")
+            else:
+                print(f"Deletion of queue {queue} failed")
+        except Exception as e:
+            print(f"Error occured while trying to delete queue {queue}. {e}")
+        finally:
+            self.controllers_mut.release()
 
     def create_request(
-        self, req_type: int, values: list[Tuple[int, Any]] = None
+        self, req_type: int, values: list[Tuple[int, Any]] = None, request_needs_authentication: bool = False
     ) -> bytes:
         req_bytes = req_type.to_bytes(length=INT_SIZE, byteorder=ENDIAS)
 
         if values != None:
             for reqValKey, val in values:
                 if val != None:
-                    req_bytes += reqValKey.to_bytes(
-                        length=4, byteorder=ENDIAS
-                    ) + self.__val_to_bytes(val)
+                    req_bytes += self.__val_to_bytes(reqValKey) + self.__val_to_bytes(val)
 
-        # if self.conf.sasl_enable:
-        #     req_bytes += (
-        #         USERNAME.to_bytes(length=4, byteorder=ENDIAS)
-        #         + self.__val_to_bytes(self.conf.sasl_username)
-        #         + PASSWORD.to_bytes(length=4, byteorder=ENDIAS)
-        #         + self.__val_to_bytes(self.conf.sasl_password)
-        #     )
+        if self.conf.sasl_enable and request_needs_authentication:
+            req_bytes += (
+                self.__val_to_bytes(USERNAME)
+                + self.__val_to_bytes(self.conf.sasl_username)
+                + self.__val_to_bytes(PASSWORD)
+                + self.__val_to_bytes(self.conf.sasl_password)
+            )
 
-        return (LONG_SIZE + len(req_bytes)).to_bytes(
-            length=LONG_SIZE, byteorder=ENDIAS
-        ) + req_bytes
+        return self.__val_to_bytes(LONG_SIZE + len(req_bytes), LONG_SIZE) + req_bytes
     
     def close(self):
         self.__stopped = True
@@ -233,9 +255,9 @@ class BrokerClient:
         finally:
             self.controllers_mut.release()
 
-    def __val_to_bytes(self, val: Any) -> bytes:
+    def __val_to_bytes(self, val: Any, numeric_size: int | None = None) -> bytes:
         if isinstance(val, int):
-            return val.to_bytes(length=4, byteorder=ENDIAS)
+            return val.to_bytes(length=4 if numeric_size is None else numeric_size, byteorder=ENDIAS)
         elif isinstance(val, str):
             return len(val).to_bytes(length=4, byteorder=ENDIAS) + val.encode()
         else:

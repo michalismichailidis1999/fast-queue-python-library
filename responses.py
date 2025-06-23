@@ -37,8 +37,29 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
             )
 
             offset += INT_SIZE
-        elif res_key == CONTROLLER_CONNECTION_INFO:
+        elif res_key == TOTAL_PARTITIONS:
+            field_values["total_partitions"] = int.from_bytes(
+                bytes=res_bytes[offset : (offset + INT_SIZE)],
+                byteorder=ENDIAS,
+                signed=False,
+            )
+
+            offset += INT_SIZE
+        elif res_key == CONTROLLER_CONNECTION_INFO or res_key == PARTITION_NODE_CONNECTION_INFO:
             node = {}
+
+            key_to_use = "controller_nodes"
+
+            if res_key == PARTITION_NODE_CONNECTION_INFO:
+                node["partition_id"] = int.from_bytes(
+                    bytes=res_bytes[offset : (offset + INT_SIZE)],
+                    byteorder=ENDIAS,
+                    signed=False,
+                )
+
+                offset += INT_SIZE
+
+                key_to_use = "partition_leader_nodes"
 
             node["node_id"] = int.from_bytes(
                 bytes=res_bytes[offset : (offset + INT_SIZE)],
@@ -70,10 +91,10 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
 
             offset += INT_SIZE
 
-            if "controller_nodes" not in field_values:
-                field_values["controller_nodes"] = [node]
+            if key_to_use not in field_values:
+                field_values[key_to_use] = [node]
             else:
-                field_values["controller_nodes"].append(node)
+                field_values[key_to_use].append(node)
 
     return field_values
 
@@ -88,6 +109,20 @@ class ControllerConnectionInfo:
         return (
             "{"
             + f'"node_id": {self.node_id}, "address": "{(self.address if self.address != "127.0.0.1" else "localhost")}:{self.port}"'
+            + "}"
+        )
+    
+class PartitionLeaderConnectionInfo:
+    def __init__(self, partition_id: int, node_id: int, address: str, port: int):
+        self.partition_id: int = partition_id
+        self.node_id: int = node_id
+        self.address: str = address
+        self.port: int = port
+
+    def __str__(self):
+        return (
+            "{"
+            + f'"partition_id": {self.partition_id}, "node_id": {self.node_id}, "address": "{(self.address if self.address != "127.0.0.1" else "localhost")}:{self.port}"'
             + "}"
         )
 
@@ -123,3 +158,28 @@ class CreateQueueResponse:
         res_fields = _response_fields_mapper(res_bytes, set([OK]))
 
         self.success: bool = res_fields["success"]
+
+class DeleteQueueResponse:
+    def __init__(self, res_bytes: bytes):
+        res_fields = _response_fields_mapper(res_bytes, set([OK]))
+
+        self.success: bool = res_fields["success"]
+
+class GetQueuePartitionInfoResponse:
+    def __init__(self, res_bytes: bytes):
+        res_fields = _response_fields_mapper(
+            res_bytes, set([TOTAL_PARTITIONS, PARTITION_NODE_CONNECTION_INFO])
+        )
+
+        self.leader_id: int = res_fields["total_partitions"]
+        self.partition_leader_nodes: List[PartitionLeaderConnectionInfo] = []
+
+        for node_info in res_fields["partition_leader_nodes"]:
+            self.partition_leader_nodes.append(
+                ControllerConnectionInfo(
+                    node_id=node_info["partition_id"],
+                    node_id=node_info["node_id"],
+                    address=node_info["address"],
+                    port=node_info["port"],
+                )
+            )

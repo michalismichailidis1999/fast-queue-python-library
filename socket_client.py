@@ -3,6 +3,7 @@ import time
 from queue import Queue
 import ssl
 import threading
+from typing import Tuple
 from constants import *
 from exceptions import RetryableException, FastQueueException
 
@@ -111,7 +112,7 @@ class SocketConnection:
 
 class SocketClient:
 
-    def __init__(self, address: str, port: int, conf: SocketClientConf) -> None:
+    def __init__(self, address: str, port: int, conf: SocketClientConf, max_pool_connections: int = -1) -> None:
         self.address: str = address
         self.port: int = port
         self.pool: Queue[SocketConnection] = Queue()
@@ -120,9 +121,17 @@ class SocketClient:
             address=address if address != "localhost" else "127.0.0.1", port=port
         )
 
+        self.max_pool_connections: int = self.conf.max_pool_connections
+
+        if max_pool_connections > 0:
+            self.max_pool_connections = max_pool_connections
+
         self.__stopped = False
         t = threading.Thread(target=self.__keep_pool_connections_to_maximum, daemon=True)
         t.start()
+
+    def get_connection_info(self) -> Tuple[str, int]:
+        return (self.address, self.port)
 
     def add_connection(self, address: str, port: int):
         # Create a TCP/IP socket
@@ -204,12 +213,12 @@ class SocketClient:
                     
                     conn.init_fail_count()
 
-                    res_err_code = self.get_response_error_code(response)
+                    res_err_code = self.__get_response_error_code(response)
 
                     if res_err_code != NO_ERROR:
                         self.pool.put(conn)
 
-                        res_err_message = self.get_response_error(response)
+                        res_err_message = self.__get_response_error(response)
 
                         if self.__is_error_retryable(res_err_code):
                             err = RetryableException(
@@ -245,18 +254,7 @@ class SocketClient:
         if err != None: raise Exception(f"{err}")
 
         return None
-
-    def get_response_error_code(self, res: bytes) -> int:
-        return int.from_bytes(bytes=res[:INT_SIZE], byteorder=ENDIAS)
-
-    def get_response_error(self, res: bytes) -> str:
-        return (
-            res[INT_SIZE:].decode() if len(res) > INT_SIZE else "Internal server error"
-        )
-
-    def __is_error_retryable(self, error_code: int):
-        return error_code in [CONNECTION_ERROR, TIMEOUT_ERROR]
-
+    
     def close(self):
         self.__stopped = True
         while self.pool.empty():
@@ -269,10 +267,21 @@ class SocketClient:
                 )
                 break
 
+    def __get_response_error_code(self, res: bytes) -> int:
+        return int.from_bytes(bytes=res[:INT_SIZE], byteorder=ENDIAS)
+
+    def __get_response_error(self, res: bytes) -> str:
+        return (
+            res[INT_SIZE:].decode() if len(res) > INT_SIZE else "Internal server error"
+        )
+
+    def __is_error_retryable(self, error_code: int):
+        return error_code in [CONNECTION_ERROR, TIMEOUT_ERROR]
+
     def __keep_pool_connections_to_maximum(self):
         while not self.__stopped:
             qsize = self.pool.qsize()
-            for _ in range(qsize, self.conf.max_pool_connections + 1):
+            for _ in range(qsize, self.max_pool_connections + 1):
                 self.add_connection(self.address, self.port)
 
             if self.__stopped: break
