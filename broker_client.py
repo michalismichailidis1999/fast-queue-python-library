@@ -79,52 +79,43 @@ class BrokerClient:
         controller_conn = SocketClient(address=controller_node[0], port=controller_node[1], conf=self.conf, max_pool_connections=1)
     
         while not self.__stopped:
-            controllers_connection_res: GetControllersConnectionInfoResponse = None
-
             self.controllers_mut.acquire()
 
             try:
                 while retries > 0:
                     try:
-                        res = (
-                            GetControllersConnectionInfoResponse(
-                                controller_conn.send_request(
-                                    self.create_request(GET_CONTROLLERS_CONNECTION_INFO, None, False)
-                                )
+                        res = GetControllersConnectionInfoResponse(
+                            controller_conn.send_request(
+                                self.create_request(GET_CONTROLLERS_CONNECTION_INFO, None, False)
                             )
-                            if controllers_connection_res is None
-                            else controllers_connection_res
                         )
 
                         to_keep = set()
 
-                        if controllers_connection_res is None:
-                            controllers_connection_res = res
-
-                            for controller in res.controller_nodes:
-                                if controller.node_id in self.controller_nodes:
-                                    conn_info = self.controller_nodes[controller.node_id].get_connection_info()
-                                    if conn_info[0] != controller.address and conn_info[1] != controller.port:
-                                        del self.controller_nodes[controller.node_id]
-                                        self.controller_nodes[controller.node_id] = SocketClient(
-                                            controller.address, controller.port, conf
-                                        )
-                                else:
+                        for controller in res.controller_nodes:
+                            if controller.node_id in self.controller_nodes:
+                                conn_info = self.controller_nodes[controller.node_id].get_connection_info()
+                                if conn_info[0] != controller.address and conn_info[1] != controller.port:
+                                    del self.controller_nodes[controller.node_id]
                                     self.controller_nodes[controller.node_id] = SocketClient(
-                                        controller.address, controller.port, conf
+                                        controller.address, controller.port, self.conf
                                     )
+                            else:
+                                self.controller_nodes[controller.node_id] = SocketClient(
+                                    controller.address, controller.port, self.conf
+                                )
 
-                                to_keep.add(controller.node_id)
+                            to_keep.add(controller.node_id)
 
-                            for node_id in self.controller_nodes.keys():
-                                if node_id not in to_keep:
-                                    del self.controller_nodes[node_id]
+                        for node_id in self.controller_nodes.keys():
+                            if node_id not in to_keep:
+                                del self.controller_nodes[node_id]
 
-                            if called_from_contructor:
-                                print("Initialized controller nodes connection info:")
+                        if called_from_contructor:
+                            print("Initialized controller nodes connection info:")
 
-                                for node in res.controller_nodes:
-                                    print(node)
+                            for node in res.controller_nodes:
+                                print(node)
 
                         if res.leader_id in self.controller_nodes:
                             self.controller_leader = res.leader_id
@@ -136,7 +127,7 @@ class BrokerClient:
                             )
                         )
 
-                        controllers_connection_res.leader_id = leader_res.leader_id
+                        res.leader_id = leader_res.leader_id
 
                         if called_from_contructor and res.leader_id not in self.controller_nodes:
                             print("Leader not elected yet")
@@ -152,11 +143,30 @@ class BrokerClient:
             finally:
                 self.controllers_mut.release()
 
-            if called_from_contructor: return
+            if called_from_contructor:
+                controller_conn.close()
+                return
 
-            if self.__stopped: break
+            if self.__stopped:
+                controller_conn.close()
+                break
 
             time.sleep(10)
+
+    def get_leader_socket(self) -> SocketClient | None:
+        self.controllers_mut.acquire()
+
+        leader_socket_client = None
+
+        try:
+            if self.controller_leader in self.controller_nodes:
+                leader_socket_client = self.controller_nodes[self.controller_leader]
+        except Exception as e:
+            print(f"Error occured while trying to get controller leader socket. {e}")
+        finally:
+            self.controllers_mut.release()
+
+        return leader_socket_client
 
     def create_queue(
         self, queue: str, partitions: int = 1, replication_factor: int = 1

@@ -1,6 +1,7 @@
 from typing import Callable, Dict
 from broker_client import *
 from constants import *
+from responses import GetQueuePartitionInfoResponse
 import threading
 import time
 import mmh3
@@ -47,30 +48,93 @@ class Producer:
         self.__prev_partition_sent: int = -1
         self.__seed = random.randint(100, 1000)
 
+        self.__total_partitions = 0
+        self.__partitions_clients: Dict[int, SocketClient | None] = {}
+        self.__partitions_nodes: Dict[int, int] = {}
+
         self.__stopped: bool = False
 
-        self.__retrieve_queue_partitions_info()
+        self.__retrieve_queue_partitions_info(5, True)
+
+        t1 = threading.Thread(target=self.__retrieve_queue_partitions_info, args=[1, False], daemon=True)
+        t1.start()
 
         if self.conf.wait_ms > 0:
-            t = threading.Thread(target=self.__flush_messages_batch, daemon=True)
-            t.start()
+            t2 = threading.Thread(target=self.__flush_messages_batch, daemon=True)
+            t2.start()
 
         print(
             f"Producer initialized for queue {self.conf.queue}"
         )
 
-    def __retrieve_queue_partitions_info(self):
-        self.partitions_info_mut.acquire()
+    def __retrieve_queue_partitions_info(self, retries: int = 1, called_from_contructor: bool = False):
+        while not self.__stopped:
+            self.partitions_info_mut.acquire()
+            
+            try:
+                while retries > 0:
+                    leader_socket = self.client.get_leader_socket()
+                    
+                    if leader_socket == None:
+                        raise Exception("Leader controller didn't elected yet")
+                    
+                    res = GetQueuePartitionInfoResponse(
+                        leader_socket.send_request(
+                            self.create_request(GET_QUEUE_PARTITIONS_INFO, [], False)
+                        )
+                    )
 
-        try:
-            self.__total_partitions = 0
-            self.__partitions_clients: Dict[int, SocketClient] = {}
+                    for partition_id in range(res.total_partitions):
+                        if partition_id not in self.__partitions_clients:
+                            self.__partitions_clients[partition_id] = None
 
-            # TODO: Complete this function's logic
-        except Exception as e:
-            pass
-        finally:
-            self.partitions_info_mut.release()
+                    to_keep = set()
+
+                    for partition_leader in res.partition_leader_nodes:
+                        if partition_leader.node_id in self.__partitions_clients:
+                            conn_info = self.__partitions_clients[partition_leader.node_id].get_connection_info()
+                            if conn_info[0] != partition_leader.address and conn_info[1] != partition_leader.port:
+                                del self.__partitions_clients[partition_leader.node_id]
+                                self.__partitions_clients[partition_leader.node_id] = SocketClient(
+                                    partition_leader.address, partition_leader.port, self.client.conf
+                                )
+                        else:
+                            self.__partitions_clients[partition_leader.node_id] = SocketClient(
+                                partition_leader.address, partition_leader.port, self.client.conf
+                            )
+
+                        self.__partitions_nodes[partition_leader.partition_id] = partition_leader.node_id
+
+                        to_keep.add(partition_leader.node_id)
+
+                    for node_id in self.__partitions_clients.keys():
+                        if node_id not in to_keep:
+                            del self.__partitions_clients[node_id]
+
+                    if called_from_contructor:
+                        print(f"Initialized queue's {self.conf.queue} partition leader nodes")
+
+                        for node in res.partition_leader_nodes:
+                            print(node)
+
+                    not_initialized_leaders = []
+
+                    if len(filter(lambda x: x is not None, self.__partitions_clients.items())) == res.total_partitions: break
+
+                    print("Not all partitions have assigned leader yet")
+
+                    retries -= 1
+                    
+                    if retries > 0: time.sleep(3)
+            except Exception as e:
+                if called_from_contructor: raise e
+                print(f"Error occured while trying to fetch queue's {self.conf.queue} partitions info. {e}")
+            finally:
+                self.partitions_info_mut.release()
+
+            if called_from_contructor: return
+
+            time.sleep(10)
 
     def produce(
         self,
@@ -142,6 +206,9 @@ class Producer:
                             raise Exception(f"Error in partition {partition} connection pool retrieval")
                         
                         partition_client = self.__partitions_clients[partition]
+
+                        if partition_client == None:
+                            raise Exception(f"No leader node for partition {partition} elected yet")
 
                         partition_client.send_request(
                             self.client.create_request(

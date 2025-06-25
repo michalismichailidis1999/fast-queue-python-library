@@ -171,13 +171,13 @@ class GetQueuePartitionInfoResponse:
             res_bytes, set([TOTAL_PARTITIONS, PARTITION_NODE_CONNECTION_INFO])
         )
 
-        self.leader_id: int = res_fields["total_partitions"]
+        self.total_partitions: int = res_fields["total_partitions"]
         self.partition_leader_nodes: List[PartitionLeaderConnectionInfo] = []
 
         for node_info in res_fields["partition_leader_nodes"]:
             self.partition_leader_nodes.append(
-                ControllerConnectionInfo(
-                    node_id=node_info["partition_id"],
+                PartitionLeaderConnectionInfo(
+                    partition_id=node_info["partition_id"],
                     node_id=node_info["node_id"],
                     address=node_info["address"],
                     port=node_info["port"],
