@@ -7,6 +7,7 @@ import time
 import mmh3
 import random
 from socket_client import SocketClient
+from lock import ReadWriteLock
 
 class ProducerConf:
 
@@ -32,19 +33,18 @@ class ProducerConf:
 class Producer:
 
     def __init__(self, client: BrokerClient, conf: ProducerConf) -> None:
-        self.client: BrokerClient = client
-        self.conf: ProducerConf = conf
+        self.__client: BrokerClient = client
+        self.__conf: ProducerConf = conf
 
-        self.partitions: Dict[
-            int, list[(bytes, bytes, Callable[[Exception, bytes, bytes, int], None])]
+        self.__partitions: Dict[
+            int, list[Tuple[bytes, bytes | None, Callable[[bytes, bytes | None, Exception], None]]]
         ] = {}
-        self.total_bytes_cached = 0
+        self.__total_bytes_cached = 0
 
-        self.messages_mut: threading.Lock = threading.Lock()
-        self.partitions_mut: threading.Lock = threading.Lock()
-        self.partitions_info_mut: threading.Lock = threading.Lock()
+        self.__messages_lock: ReadWriteLock = ReadWriteLock()
+        self.__partitions_lock: ReadWriteLock = ReadWriteLock()
 
-        self.__send_messages_in_batches: bool = self.conf.wait_ms > 0
+        self.__send_messages_in_batches: bool = self.__conf.wait_ms > 0
         self.__prev_partition_sent: int = -1
         self.__seed = random.randint(100, 1000)
 
@@ -59,78 +59,65 @@ class Producer:
         t1 = threading.Thread(target=self.__retrieve_queue_partitions_info, args=[1, False], daemon=True)
         t1.start()
 
-        if self.conf.wait_ms > 0:
+        if self.__conf.wait_ms > 0:
             t2 = threading.Thread(target=self.__flush_messages_batch, daemon=True)
             t2.start()
 
         print(
-            f"Producer initialized for queue {self.conf.queue}"
+            f"Producer initialized for queue {self.__conf.queue}"
         )
 
     def __retrieve_queue_partitions_info(self, retries: int = 1, called_from_contructor: bool = False):
         while not self.__stopped:
-            self.partitions_info_mut.acquire()
-            
-            try:
-                while retries > 0:
-                    leader_socket = self.client.get_leader_socket()
+            while retries > 0:
+                leader_socket = self.__client._get_leader_node_socket_client()
+                
+                if leader_socket == None:
+                    raise Exception("Leader controller didn't elected yet")
+                
+                res = GetQueuePartitionInfoResponse(
+                    leader_socket.send_request(
+                        self.__client._create_request(GET_QUEUE_PARTITIONS_INFO, [], False)
+                    )
+                )
+
+                for partition_id in range(res.total_partitions):
+                    if partition_id not in self.__partitions_clients:
+                        self.__partitions_clients[partition_id] = None
+
+                to_keep = set()
+
+                for partition_leader in res.partition_leader_nodes:
+                    conn_info: Tuple[str, int] | None = self.__get_leader_node_conenction_info(partition_leader.node_id)
+
+                    if conn_info is not None and conn_info[0] == partition_leader.address and conn_info[1] == partition_leader.port:
+                        continue
                     
-                    if leader_socket == None:
-                        raise Exception("Leader controller didn't elected yet")
-                    
-                    res = GetQueuePartitionInfoResponse(
-                        leader_socket.send_request(
-                            self.create_request(GET_QUEUE_PARTITIONS_INFO, [], False)
-                        )
+                    self.__replace_leader_node_socket_client(
+                        node_id=partition_leader.node_id, 
+                        new_address=partition_leader.address, 
+                        new_port=partition_leader.port,
                     )
 
-                    for partition_id in range(res.total_partitions):
-                        if partition_id not in self.__partitions_clients:
-                            self.__partitions_clients[partition_id] = None
+                    self.__partitions_nodes[partition_leader.partition_id] = partition_leader.node_id
 
-                    to_keep = set()
+                    to_keep.add(partition_leader.node_id)
 
-                    for partition_leader in res.partition_leader_nodes:
-                        if partition_leader.node_id in self.__partitions_clients:
-                            conn_info = self.__partitions_clients[partition_leader.node_id].get_connection_info()
-                            if conn_info[0] != partition_leader.address and conn_info[1] != partition_leader.port:
-                                del self.__partitions_clients[partition_leader.node_id]
-                                self.__partitions_clients[partition_leader.node_id] = SocketClient(
-                                    partition_leader.address, partition_leader.port, self.client.conf
-                                )
-                        else:
-                            self.__partitions_clients[partition_leader.node_id] = SocketClient(
-                                partition_leader.address, partition_leader.port, self.client.conf
-                            )
+                self.__remove_unused_controller_nodes(to_keep)
 
-                        self.__partitions_nodes[partition_leader.partition_id] = partition_leader.node_id
+                if called_from_contructor:
+                    print(f"Initialized queue's {self.__conf.queue} partition leader nodes")
 
-                        to_keep.add(partition_leader.node_id)
+                    for node in res.partition_leader_nodes:
+                        print(node)
 
-                    for node_id in self.__partitions_clients.keys():
-                        if node_id not in to_keep:
-                            del self.__partitions_clients[node_id]
+                if len(filter(lambda x: x is not None, self.__partitions_clients.items())) == res.total_partitions: break
 
-                    if called_from_contructor:
-                        print(f"Initialized queue's {self.conf.queue} partition leader nodes")
+                print("Not all partitions have assigned leader yet")
 
-                        for node in res.partition_leader_nodes:
-                            print(node)
-
-                    not_initialized_leaders = []
-
-                    if len(filter(lambda x: x is not None, self.__partitions_clients.items())) == res.total_partitions: break
-
-                    print("Not all partitions have assigned leader yet")
-
-                    retries -= 1
-                    
-                    if retries > 0: time.sleep(3)
-            except Exception as e:
-                if called_from_contructor: raise e
-                print(f"Error occured while trying to fetch queue's {self.conf.queue} partitions info. {e}")
-            finally:
-                self.partitions_info_mut.release()
+                retries -= 1
+                
+                if retries > 0: time.sleep(3)
 
             if called_from_contructor: return
 
@@ -140,7 +127,7 @@ class Producer:
         self,
         message: str,
         key: str = None,
-        on_delivery: Callable[[Exception, bytes, int], None] = None,
+        on_delivery: Callable[[bytes, bytes | None, Exception], None] = None,
     ) -> None:
         if message is None or message == "":
             raise ValueError("Message was empty")
@@ -150,35 +137,35 @@ class Producer:
     def produce(
         self,
         message: bytes,
-        key: bytes, 
-        on_delivery: Callable[[Exception, bytes, int], None] = None,
+        key: bytes | None, 
+        on_delivery: Callable[[bytes, bytes | None, Exception], None] = None,
     ) -> None:
         if message == None or len(message) == 0:
             raise ValueError("Message was empty")
 
         ex: Exception = None
 
-        self.messages_mut.acquire()
+        self.__messages_lock.acquire_write()
 
         try:
             partition: int = self.__get_message_partition(key)
 
-            if partition not in self.partitions:
-                self.partitions[partition] = []
+            if partition not in self.__partitions:
+                self.__partitions[partition] = []
 
-            self.partitions[partition].append((message, key, on_delivery))
-            self.total_bytes_cached += message.get_total_bytes()
+            self.__partitions[partition].append((message, key, on_delivery))
+            self.__total_bytes_cached += len(message)
             self.__prev_partition_sent = partition
         except Exception as e:
             ex = e
         finally:
-            self.messages_mut.release()
+            self.__messages_lock.release_write()
 
         if ex != None:
             raise ex
 
         if (
-            self.conf.max_batch_size <= self.total_bytes_cached
+            self.__conf.max_batch_size <= self.__total_bytes_cached
             or not self.__send_messages_in_batches
         ):
             self.flush()
@@ -186,92 +173,87 @@ class Producer:
     def flush(self):
         ex: Exception = None
 
-        self.messages_mut.acquire()
+        self.__messages_lock.acquire_write()
 
         try:
-            if len(self.partitions.keys()) > 0:
+            if len(self.__partitions.keys()) > 0:
                 print("Flushing messages...")
 
-                for partition in self.partitions.keys():
-                    if len(self.partitions[partition]) == 0:
+                for partition in self.__partitions.keys():
+                    if len(self.__partitions[partition]) == 0:
                         continue
 
-                    partition_ex: Exception = None
+                    partition_ex: Exception | None = None
                     flushed_bytes: int = 0
 
-                    self.partitions_info_mut.acquire()
-
                     try:
-                        if partition not in self.__partitions_clients:
-                            raise Exception(f"Error in partition {partition} connection pool retrieval")
-                        
-                        partition_client = self.__partitions_clients[partition]
+                        partition_client = self._get_leader_node_socket_client(partition_id=partition)
 
                         if partition_client == None:
                             raise Exception(f"No leader node for partition {partition} elected yet")
-
-                        partition_client.send_request(
-                            self.client.create_request(
-                                PRODUCE,
-                                [
-                                    (QUEUE_NAME, self.conf.queue),
-                                    (PARTITION, partition),
-                                ]
-                                + [
-                                    (MESSAGE, str(message))
-                                    for message, _ in self.partitions[partition]
-                                ],
+                        
+                        try:
+                            partition_client.send_request(
+                                self.__client._create_request(
+                                    PRODUCE,
+                                    [
+                                        (QUEUE_NAME, self.__conf.queue),
+                                        (PARTITION, partition),
+                                    ]
+                                    + [
+                                        (MESSAGE, str(message))
+                                        for message, _ in self.__partitions[partition]
+                                    ],
+                                )
                             )
-                        )
+                        except Exception as e:
+                            partition_ex = e
+                        finally:
+                            for message, key, cb in self.__partitions[partition]:
+                                flushed_bytes += len(message)
+                                if cb != None: cb(message, key, partition_ex)
                     except Exception as e:
-                        partition_ex = e
-                    finally:
-                        self.partitions_info_mut.release()
-
-                        for message, key, cb in self.partitions[partition]:
-                            try:
-                                message_bytes: int = message.get_total_bytes()
-                                flushed_bytes += message_bytes
-                                if cb != None:
-                                    cb(partition_ex, message, key, message_bytes)
-                            except Exception as e:
-                                print(f"Error occured while executing message callback. {e}")
+                        raise e
 
                     print(f"Flushed {flushed_bytes} bytes from partition {partition}")
-
-                    self.total_bytes_cached -= flushed_bytes
-                    del self.partitions[partition]
-
-                    print("Messages flushed")
+                    self.__total_bytes_cached -= flushed_bytes
+                    del self.__partitions[partition]
         except Exception as e:
             ex = e
         finally:
-            self.messages_mut.release()
+            self.__messages_lock.release_write()
+
+        if ex is not None: raise e
+
+        print("Messages flushed")
 
     def close(self):
         self.__stopped = True
 
         try:
-            if self.total_bytes_cached > 0:
+            if self.__total_bytes_cached > 0:
                 print("Trying to flush remaining messages before shutdown..")
                 self.flush()
         except Exception as e:
             print(f"Could not flush remaining messages. Reason: {e}")
 
-        self.client.close()
+        self.__client.close()
 
         print("Producer closed")
 
     def __flush_messages_batch(self):
         while not self.__stopped:
-            time.sleep(self.conf.wait_ms / 1000)
-            self.flush()
+            time.sleep(self.__conf.wait_ms / 1000)
+            try:
+                self.flush()
+            except Exception as e:
+                print(f"Error occured while flushing messages periodically. {e}")
 
     def __get_message_partition(self, key: bytes = None) -> int:
         if key == None:
             ex: Exception = None
 
-            self.partitions_mut.acquire()
+            self.__partitions_lock.acquire()
 
             partition: int = self.__prev_partition_sent
 
@@ -283,7 +265,7 @@ class Producer:
             except Exception as e:
                 ex = e
             finally:
-                self.partitions_mut.release()
+                self.__partitions_lock.release()
 
             if ex != None:
                 raise ex
@@ -291,6 +273,51 @@ class Producer:
             return partition
         else:
             return mmh3.hash(key=key, seed=self.__seed) % self.__total_partitions
+        
+    def __replace_leader_node_socket_client(self, node_id: int, new_address: str, new_port: int):
+        self.__partitions_lock.acquire_write()
+
+        try:
+            if node_id in self.__partitions_clients: del self.__partitions_clients[node_id]
+            self.__partitions_clients[node_id] = SocketClient(address=new_address, port=new_port, conf=self.__client._conf)
+        except Exception as e:
+            pass
+        finally:
+            self.__partitions_lock.release_write()
+
+    def __get_leader_node_conenction_info(self, node_id: int) -> Tuple[str, int] | None:
+        self.__partitions_lock.acquire_read()
+
+        conn_info: Tuple[str, int] | None = None
+
+        if node_id in self.__partitions_clients:
+            conn_info = self.__partitions_clients[node_id].get_connection_info()
+
+        self.__partitions_lock.release_read()
+
+        return conn_info
+    
+    def __remove_unused_controller_nodes(self, to_keep: Set[int]):
+        self.__partitions_lock.acquire_write()
+
+        try:
+            node_ids = list(self.__partitions_clients.keys())
+            for node_id in node_ids:
+                if node_id not in to_keep:
+                    del self.__partitions_clients[node_id]
+        except Exception as e:
+            print(f"Error occured while trying to remove unused node connection. {e}")
+        finally:
+            self.__partitions_lock.release_write()
+
+    def _get_leader_node_socket_client(self, partition_id: int) -> SocketClient | None:
+        self.__partitions_lock.acquire_read()
+
+        socket_client = self.__partitions_clients[partition_id] if partition_id in self.__partitions_clients else None
+
+        self.__partitions_lock.release_read()
+
+        return socket_client
         
     def __del__(self):
         self.close()

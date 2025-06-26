@@ -3,7 +3,7 @@ from producer import Producer, ProducerConf
 from constants import *
 
 
-def on_delivery_callback(exception: Exception, message: bytes, key: bytes, message_bytes: int):
+def on_delivery_callback(message: bytes, key: bytes | None, exception: Exception | None):
     if exception != None:
         pass
         # print(
@@ -22,6 +22,7 @@ broker_conf = BrokerClientConf(
     # root_cert="C:\\Users\\Windows\\.ssh\\message_broker_certs\\ca.crt",
     # cert="C:\\Users\\Windows\\.ssh\\message_broker_certs\\client.crt",
     # cert_key="C:\\Users\\Windows\\.ssh\\message_broker_certs\\client.key",
+    # cert_pass = None,
     # sasl_enabled=True,
     # sasl_auth_method=SASL_BASIC_AUTH,
     # sasl_username="test",
