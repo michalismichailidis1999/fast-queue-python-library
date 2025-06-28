@@ -19,9 +19,6 @@ class SocketClientConf:
         cert: str = None,
         cert_key: str = None,
         cert_pass: str = None,
-        sasl_enable: bool = False,
-        sasl_username: str = None,
-        sasl_password: str = None,
         max_pool_connections: int = 10
     ) -> None:
         if timeoutms < 0:
@@ -44,9 +41,6 @@ class SocketClientConf:
         self._cert: str = cert
         self._cert_key: str = cert_key
         self._cert_pass: str = cert_pass
-        self._sasl_enable: bool = sasl_enable
-        self._sasl_username: str = sasl_username
-        self._sasl_password: str = sasl_password
         self._max_pool_connections: int = max_pool_connections
 
 class SocketConnection:

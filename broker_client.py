@@ -22,9 +22,9 @@ class BrokerClientConf(SocketClientConf):
         cert: str = None,
         cert_key: str = None,
         cert_pass: str = None,
-        sasl_enable: bool = False,
-        sasl_username: str = None,
-        sasl_password: str = None,
+        authentication_enable: bool = False,
+        username: str = None,
+        password: str = None,
         max_pool_connections: int = 10
     ) -> None:
         super().__init__(
@@ -36,11 +36,12 @@ class BrokerClientConf(SocketClientConf):
             cert=cert,
             cert_key=cert_key,
             cert_pass=cert_pass,
-            sasl_enable=sasl_enable,
-            sasl_username=sasl_username,
-            sasl_password=sasl_password,
             max_pool_connections=max_pool_connections
         )
+
+        self._authentication_enable: bool = authentication_enable
+        self._username: str = username
+        self._password: str = password
 
 
 class BrokerClient:
@@ -221,12 +222,12 @@ class BrokerClient:
                 if val != None:
                     req_bytes += self.__val_to_bytes(reqValKey) + self.__val_to_bytes(val)
 
-        if self._conf.sasl_enable and request_needs_authentication:
+        if self._conf._authentication_enable and request_needs_authentication:
             req_bytes += (
                 self.__val_to_bytes(USERNAME)
-                + self.__val_to_bytes(self._conf.sasl_username)
+                + self.__val_to_bytes(self._conf._username)
                 + self.__val_to_bytes(PASSWORD)
-                + self.__val_to_bytes(self._conf.sasl_password)
+                + self.__val_to_bytes(self._conf._password)
             )
 
         return self.__val_to_bytes(LONG_SIZE + len(req_bytes), LONG_SIZE) + req_bytes

@@ -23,10 +23,9 @@ broker_conf = BrokerClientConf(
     # cert="C:\\Users\\Windows\\.ssh\\message_broker_certs\\client.crt",
     # cert_key="C:\\Users\\Windows\\.ssh\\message_broker_certs\\client.key",
     # cert_pass = None,
-    # sasl_enabled=True,
-    # sasl_auth_method=SASL_BASIC_AUTH,
-    # sasl_username="test",
-    # sasl_password="test",
+    # authentication_enabled=True,
+    # username="test",
+    # password="test",
 )
 
 client = BrokerClient(conf=broker_conf, controller_node=["127.0.0.1", 9877])
