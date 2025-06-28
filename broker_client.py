@@ -62,7 +62,9 @@ class BrokerClient:
         self.__controller_nodes: Dict[int, SocketClient] = {}
         self.__leader_node_id: int = -1
 
-        self._conf = conf
+        self._conf: BrokerClientConf = conf
+
+        self.__stopped: bool = False
 
         # initialize the leader
         self.__check_for_leader_update(controller_node=controller_node, retries=5, called_from_contructor=True)
@@ -70,8 +72,6 @@ class BrokerClient:
         print(
             f"Connected successfully to controller quorum leader {self.__leader_node_id}"
         )
-
-        self.__stopped = False
 
         # check periodically for leader change
         t = threading.Thread(target=self.__check_for_leader_update, daemon=True, args=[controller_node, 1, False])
@@ -92,6 +92,8 @@ class BrokerClient:
                     to_keep = set()
 
                     for controller in res.controller_nodes:
+                        to_keep.add(controller.node_id)
+
                         conn_info: Tuple[str, int] | None = self.__get_controller_node_conenction_info(controller.node_id)
 
                         if conn_info is not None and conn_info[0] == controller.address and conn_info[1] == controller.port:
@@ -103,9 +105,6 @@ class BrokerClient:
                             new_port=controller.port,
                         )
 
-                        to_keep.add(controller.node_id)
-
-
                     self.__remove_unused_controller_nodes(to_keep)
 
                     if called_from_contructor:
@@ -114,7 +113,7 @@ class BrokerClient:
                         for node in res.controller_nodes:
                             print(node)
 
-                    if res.leader_id in self.__leader_node_id:
+                    if res.leader_id in self.__controller_nodes:
                         self.__leader_node_id = res.leader_id
                         break
 

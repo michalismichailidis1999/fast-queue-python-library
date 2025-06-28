@@ -66,7 +66,7 @@ class SocketConnection:
         (self.__sock if not self.__has_ssl_connection else self.__ssock).sendall(req)
 
     def receive_bytes(self) -> bytes:
-        res_size = (self.__sock if not self._has_ssl_connection else self.__ssock).recv(
+        res_size = (self.__sock if not self.__has_ssl_connection else self.__ssock).recv(
             LONG_SIZE
         )
 
@@ -116,8 +116,8 @@ class SocketClient:
         sock = socket(AF_INET, SOCK_STREAM)
         sock.connect((address, port))
 
-        if self.__conf._timeoutms is not None:
-            sock.settimeout(self.conf.timeoutms / 1000)
+        if self.__conf._timeoutms > 0:
+            sock.settimeout(self.__conf._timeoutms / 1000)
 
         ssock: ssl.SSLSocket = None
 
@@ -217,7 +217,7 @@ class SocketClient:
                 if retries > 0: time.sleep(self.__conf._retry_wait_ms / 1000)
                 err = e
             except Exception as e:
-                raise Exception(f"{err}")
+                raise Exception(f"{e}")
 
         if err != None: raise Exception(f"{err}")
 
@@ -240,7 +240,7 @@ class SocketClient:
 
     def __get_response_error(self, res: bytes) -> str:
         return (
-            res[INT_SIZE:].decode() if len(res) > INT_SIZE else "Internal server error"
+            res[(INT_SIZE * 3):].decode() if len(res) > (INT_SIZE * 3) else "Internal server error"
         )
 
     def __is_error_retryable(self, error_code: int):
