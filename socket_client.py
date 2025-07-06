@@ -225,7 +225,7 @@ class SocketClient:
     
     def close(self):
         self.__stopped = True
-        while self.__pool.empty():
+        while not self.__pool.empty():
             try:
                 conn = self.__pool.get_nowait()
                 conn.close()

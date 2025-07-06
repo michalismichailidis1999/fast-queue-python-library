@@ -141,6 +141,7 @@ class BrokerClient:
 
             if called_from_contructor:
                 controller_conn.close()
+                if self.__leader_node_id not in self.__controller_nodes: raise Exception("Could not connect to leader node")
                 return
 
             if self.__stopped:
@@ -260,7 +261,7 @@ class BrokerClient:
             if node_id in self.__controller_nodes: del self.__controller_nodes[node_id]
             self.__controller_nodes[node_id] = SocketClient(address=new_address, port=new_port, conf=self._conf)
         except Exception as e:
-            pass
+            print(f"Error occured while trying to connect to controlelr node {node_id}. {e}")
         finally:
             self.__lock.release_write()
 
