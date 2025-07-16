@@ -85,12 +85,14 @@ class Producer:
 
                 for partition_id in range(res.total_partitions):
                     if partition_id not in self.__partitions_clients:
-                        self.__partitions_clients[partition_id] = None
+                        self.__partitions_nodes[partition_id] = None
 
                 to_keep = set()
 
-                # TODO: Needs fixing
                 for partition_leader in res.partition_leader_nodes:
+                    self.__partitions_nodes[partition_leader.partition_id] = partition_leader.node_id
+                    to_keep.add(partition_leader.node_id)
+
                     conn_info: Tuple[str, int] | None = self.__get_leader_node_conenction_info(partition_leader.node_id)
 
                     if conn_info is not None and conn_info[0] == partition_leader.address and conn_info[1] == partition_leader.port:
@@ -101,10 +103,6 @@ class Producer:
                         new_address=partition_leader.address, 
                         new_port=partition_leader.port,
                     )
-
-                    self.__partitions_nodes[partition_leader.partition_id] = partition_leader.node_id
-
-                    to_keep.add(partition_leader.node_id)
 
                 self.__remove_unused_controller_nodes(to_keep)
 
@@ -306,7 +304,7 @@ class Producer:
         try:
             node_ids = list(self.__partitions_clients.keys())
             for node_id in node_ids:
-                if node_id not in to_keep:
+                if node_id not in to_keep and node_id is not None:
                     del self.__partitions_clients[node_id]
         except Exception as e:
             print(f"Error occured while trying to remove unused node connection. {e}")
@@ -316,7 +314,9 @@ class Producer:
     def _get_leader_node_socket_client(self, partition_id: int) -> SocketClient | None:
         self.__partitions_lock.acquire_read()
 
-        socket_client = self.__partitions_clients[partition_id] if partition_id in self.__partitions_clients else None
+        node_id: int = self.__partitions_nodes[partition_id] if partition_id in self.__partitions_nodes else -1
+
+        socket_client = self.__partitions_clients[node_id] if node_id in self.__partitions_clients else None
 
         self.__partitions_lock.release_read()
 
