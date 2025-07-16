@@ -2,19 +2,11 @@ from broker_client import BrokerClient, BrokerClientConf
 from producer import Producer, ProducerConf
 from constants import *
 
-
 def on_delivery_callback(message: bytes, key: bytes | None, exception: Exception | None):
     if exception != None:
-        pass
-        # print(
-        #     f"Could not produce message {message} with size {message_bytes} bytes. Reason: {exception}"
-        # )
+        print(f"Could not produce message `{(message.decode())}`. Reason: {exception}")
     else:
-        pass
-        # print(
-        #     f"Message {message} with size {message_bytes} bytes produced successfully"
-        # )
-
+        print(f"Message `{(message.decode())}` produced successfully")
 
 broker_conf = BrokerClientConf(
     # timeoutms=None,
@@ -32,22 +24,21 @@ client = BrokerClient(conf=broker_conf, controller_node=["127.0.0.1", 9877])
 
 queue_name = input("Enter the queue you want to produce messages to: ")
 
-client.create_queue(queue=queue_name, partitions=1, replication_factor=1)
+client.create_queue(queue=queue_name, partitions=5, replication_factor=1)
 
-# producer_conf = ProducerConf(queue=queue_name, wait_ms=1000, max_batch_size=16384)
+producer_conf = ProducerConf(queue=queue_name, wait_ms=1000, max_batch_size=16384)
 
-# producer = Producer(client=client, conf=producer_conf)
+producer = Producer(client=client, conf=producer_conf)
 
-# while True:
-#     message = input("Enter a message (type 'exit' to stop): ")
+while True:
+    message = input("Enter a message (type 'exit' to stop): ")
 
-#     if not message:
-#         print("Cannot produce empty message")
-#         continue
+    if not message:
+        print("Cannot produce empty message")
+        continue
 
-#     if message == "exit":
-#         break
+    if message == "exit": break
 
-#     producer.produce(Message(payload=message), on_delivery=on_delivery_callback)
+    producer.produce(message, on_delivery=on_delivery_callback)
 
-# producer.close()
+producer.close()

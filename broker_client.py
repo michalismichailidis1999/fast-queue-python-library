@@ -42,6 +42,7 @@ class BrokerClientConf(SocketClientConf):
         self._authentication_enable: bool = authentication_enable
         self._username: str = username
         self._password: str = password
+        self._create_queue_command_run: bool = False
 
 
 class BrokerClient:
@@ -182,6 +183,8 @@ class BrokerClient:
                 print(f"Creation of queue {queue} failed")
         except Exception as e:
             print(f"Error occured while trying to create queue {queue}. {e}")
+
+        self._create_queue_command_run = True
 
     def delete_queue(self, queue: str) -> None:
         if not queue:

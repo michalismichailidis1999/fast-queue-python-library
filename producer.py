@@ -33,6 +33,8 @@ class ProducerConf:
 class Producer:
 
     def __init__(self, client: BrokerClient, conf: ProducerConf) -> None:
+        if client._create_queue_command_run: time.sleep(5)
+
         self.__client: BrokerClient = client
         self.__conf: ProducerConf = conf
 
@@ -77,7 +79,7 @@ class Producer:
                 
                 res = GetQueuePartitionInfoResponse(
                     leader_socket.send_request(
-                        self.__client._create_request(GET_QUEUE_PARTITIONS_INFO, [], False)
+                        self.__client._create_request(GET_QUEUE_PARTITIONS_INFO, [(QUEUE_NAME, self.__conf.queue)], False)
                     )
                 )
 
@@ -87,6 +89,7 @@ class Producer:
 
                 to_keep = set()
 
+                # TODO: Needs fixing
                 for partition_leader in res.partition_leader_nodes:
                     conn_info: Tuple[str, int] | None = self.__get_leader_node_conenction_info(partition_leader.node_id)
 
@@ -117,7 +120,7 @@ class Producer:
 
                 retries -= 1
                 
-                if retries > 0: time.sleep(3)
+                if retries > 0: time.sleep(5)
 
             if called_from_contructor: return
 
@@ -290,7 +293,7 @@ class Producer:
 
         conn_info: Tuple[str, int] | None = None
 
-        if node_id in self.__partitions_clients:
+        if node_id in self.__partitions_clients and self.__partitions_clients[node_id] is not None:
             conn_info = self.__partitions_clients[node_id].get_connection_info()
 
         self.__partitions_lock.release_read()
