@@ -67,6 +67,8 @@ class BrokerClient:
 
         self.__stopped: bool = False
 
+        self.__fetch_info_wait_time_sec: int = 10
+
         # initialize the leader
         self.__check_for_leader_update(controller_node=controller_node, retries=5, called_from_contructor=True)
 
@@ -80,8 +82,12 @@ class BrokerClient:
 
     def __check_for_leader_update(self, controller_node: Tuple[str, int], retries: int, called_from_contructor: bool = False):
         controller_conn = SocketClient(address=controller_node[0], port=controller_node[1], conf=self._conf, max_pool_connections=1)
+
+        initial_retries = retries
     
         while not self.__stopped:
+            retries = initial_retries
+
             while retries > 0:
                 try:
                     res = GetControllersConnectionInfoResponse(
@@ -126,30 +132,36 @@ class BrokerClient:
 
                     res.leader_id = leader_res.leader_id
 
-                    if called_from_contructor and res.leader_id not in self.__controller_nodes:
-                        print("Leader not elected yet")
+                    if res.leader_id in self.__controller_nodes: break
+
+                    print("Leader not elected yet")
 
                     retries -= 1
-
-                    if retries > 0: time.sleep(3)
                 except Exception as e:
-                    if called_from_contructor:
+                    retries -= 1
+
+                    if called_from_contructor and retries <= 0:
                         controller_conn.close()
-                        raise Exception(f"{e}")
+                        raise Exception(f"Error occured while trying to fetch leader controller update. {e}")
                     else:
                         print(f"Error occured while trying to fetch leader controller update. {e}")
                         break
+                finally:
+                    if retries > 0: time.sleep(self.__fetch_info_wait_time_sec)
 
             if called_from_contructor:
                 controller_conn.close()
                 if self.__leader_node_id not in self.__controller_nodes: raise Exception("Could not connect to leader node")
                 return
-
+            
             if self.__stopped:
                 controller_conn.close()
                 break
 
-            time.sleep(10)
+            if self.__leader_node_id not in self.__controller_nodes: 
+                print("Could not connect to leader node")
+
+            time.sleep(self.__fetch_info_wait_time_sec)
 
     def create_queue(
         self, queue: str, partitions: int = 1, replication_factor: int = 1

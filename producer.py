@@ -56,6 +56,8 @@ class Producer:
 
         self.__stopped: bool = False
 
+        self.__fetch_info_wait_time_sec: int = 10
+
         self.__retrieve_queue_partitions_info(5, True)
 
         t1 = threading.Thread(target=self.__retrieve_queue_partitions_info, args=[1, False], daemon=True)
@@ -70,59 +72,73 @@ class Producer:
         )
 
     def __retrieve_queue_partitions_info(self, retries: int = 1, called_from_contructor: bool = False):
+        initial_retries = retries
+
         while not self.__stopped:
+            retries = initial_retries
+
             while retries > 0:
-                leader_socket = self.__client._get_leader_node_socket_client()
+                try:
+                    leader_socket = self.__client._get_leader_node_socket_client()
                 
-                if leader_socket == None:
-                    raise Exception("Leader controller didn't elected yet")
-                
-                res = GetQueuePartitionInfoResponse(
-                    leader_socket.send_request(
-                        self.__client._create_request(GET_QUEUE_PARTITIONS_INFO, [(QUEUE_NAME, self.__conf.queue)], False)
-                    )
-                )
-
-                for partition_id in range(res.total_partitions):
-                    if partition_id not in self.__partitions_clients:
-                        self.__partitions_nodes[partition_id] = None
-
-                to_keep = set()
-
-                for partition_leader in res.partition_leader_nodes:
-                    self.__partitions_nodes[partition_leader.partition_id] = partition_leader.node_id
-                    to_keep.add(partition_leader.node_id)
-
-                    conn_info: Tuple[str, int] | None = self.__get_leader_node_conenction_info(partition_leader.node_id)
-
-                    if conn_info is not None and conn_info[0] == partition_leader.address and conn_info[1] == partition_leader.port:
-                        continue
+                    if leader_socket == None:
+                        raise Exception("Leader controller didn't elected yet")
                     
-                    self.__replace_leader_node_socket_client(
-                        node_id=partition_leader.node_id, 
-                        new_address=partition_leader.address, 
-                        new_port=partition_leader.port,
+                    res = GetQueuePartitionInfoResponse(
+                        leader_socket.send_request(
+                            self.__client._create_request(GET_QUEUE_PARTITIONS_INFO, [(QUEUE_NAME, self.__conf.queue)], False)
+                        )
                     )
 
-                self.__remove_unused_controller_nodes(to_keep)
+                    for partition_id in range(res.total_partitions):
+                        if partition_id not in self.__partitions_clients:
+                            self.__partitions_nodes[partition_id] = None
 
-                if called_from_contructor:
-                    print(f"Initialized queue's {self.__conf.queue} partition leader nodes")
+                    self.__total_partitions = res.total_partitions
 
-                    for node in res.partition_leader_nodes:
-                        print(node)
+                    to_keep = set()
 
-                if len(filter(lambda x: x is not None, self.__partitions_clients.items())) == res.total_partitions: break
+                    for partition_leader in res.partition_leader_nodes:
+                        self.__partitions_nodes[partition_leader.partition_id] = partition_leader.node_id
+                        to_keep.add(partition_leader.node_id)
 
-                print("Not all partitions have assigned leader yet")
+                        conn_info: Tuple[str, int] | None = self.__get_leader_node_conenction_info(partition_leader.node_id)
 
-                retries -= 1
-                
-                if retries > 0: time.sleep(5)
+                        if conn_info is not None and conn_info[0] == partition_leader.address and conn_info[1] == partition_leader.port:
+                            continue
+                        
+                        self.__replace_leader_node_socket_client(
+                            node_id=partition_leader.node_id, 
+                            new_address=partition_leader.address, 
+                            new_port=partition_leader.port,
+                        )
+
+                    self.__remove_unused_controller_nodes(to_keep)
+
+                    if called_from_contructor:
+                        print(f"Initialized queue's {self.__conf.queue} partition leader nodes")
+
+                        for node in res.partition_leader_nodes:
+                            print(node)
+
+                    if len(list(filter(lambda x: x is not None, self.__partitions_clients.items()))) == self.__total_partitions: break
+
+                    print("Not all partitions have assigned leader yet")
+
+                    retries -= 1
+                except Exception as e:
+                    retries -= 1
+
+                    if called_from_contructor and retries <= 0:
+                        raise Exception(f"Error occured while trying to retrieve queue's {self.__conf.queue} partitions info. {e}")
+                    
+                    print(f"Error occured while trying to retrieve queue's {self.__conf.queue} partitions info. {e}")
+                finally:
+                    if retries > 0: time.sleep(self.__fetch_info_wait_time_sec)
 
             if called_from_contructor: return
 
-            time.sleep(10)
+            time.sleep(self.__fetch_info_wait_time_sec)
 
     def produce(
         self,
