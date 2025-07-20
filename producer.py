@@ -238,6 +238,7 @@ class Producer:
         except Exception as e:
             print(f"Could not flush remaining messages. Reason: {e}")
 
+        self.close()
         self.__client.close()
 
         print("Producer closed")
