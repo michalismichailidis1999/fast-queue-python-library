@@ -81,12 +81,15 @@ class BrokerClient:
         t.start()
 
     def __check_for_leader_update(self, controller_node: Tuple[str, int], retries: int, called_from_contructor: bool = False):
-        controller_conn = SocketClient(address=controller_node[0], port=controller_node[1], conf=self._conf, max_pool_connections=1)
+        controller_conn: SocketClient = SocketClient(address=controller_node[0], port=controller_node[1], conf=self._conf, max_pool_connections=1)
 
-        initial_retries = retries
+        initial_retries: int = retries
+
+        success: bool = False
     
         while not self.__stopped:
             retries = initial_retries
+            success = False
 
             while retries > 0:
                 try:
@@ -122,6 +125,8 @@ class BrokerClient:
 
                     if res.leader_id in self.__controller_nodes:
                         self.__leader_node_id = res.leader_id
+                        retries -= 1
+                        success = True
                         break
 
                     leader_res = GetLeaderControllerIdResponse(
@@ -132,11 +137,13 @@ class BrokerClient:
 
                     res.leader_id = leader_res.leader_id
 
-                    if res.leader_id in self.__controller_nodes: break
+                    retries -= 1
+
+                    if res.leader_id in self.__controller_nodes:
+                        success = True
+                        break
 
                     print("Leader not elected yet")
-
-                    retries -= 1
                 except Exception as e:
                     retries -= 1
 
@@ -147,7 +154,7 @@ class BrokerClient:
                         print(f"Error occured while trying to fetch leader controller update. {e}")
                         break
                 finally:
-                    if retries > 0: time.sleep(self.__fetch_info_wait_time_sec)
+                    if retries > 0 and not success: time.sleep(self.__fetch_info_wait_time_sec)
 
             if called_from_contructor:
                 controller_conn.close()

@@ -72,10 +72,12 @@ class Producer:
         )
 
     def __retrieve_queue_partitions_info(self, retries: int = 1, called_from_contructor: bool = False):
-        initial_retries = retries
+        initial_retries: int = retries
+        success: bool = False
 
         while not self.__stopped:
             retries = initial_retries
+            success = False
 
             while retries > 0:
                 try:
@@ -120,12 +122,14 @@ class Producer:
 
                         for node in res.partition_leader_nodes:
                             print(node)
+                            
+                    retries -= 1
 
-                    if len(list(filter(lambda x: x is not None, self.__partitions_clients.items()))) == self.__total_partitions: break
+                    if len(list(filter(lambda x: x is not None, self.__partitions_nodes.items()))) == self.__total_partitions:
+                        success = True
+                        break
 
                     print("Not all partitions have assigned leader yet")
-
-                    retries -= 1
                 except Exception as e:
                     retries -= 1
 
@@ -134,7 +138,7 @@ class Producer:
                     
                     print(f"Error occured while trying to retrieve queue's {self.__conf.queue} partitions info. {e}")
                 finally:
-                    if retries > 0: time.sleep(self.__fetch_info_wait_time_sec)
+                    if retries > 0 and not success: time.sleep(self.__fetch_info_wait_time_sec)
 
             if called_from_contructor: return
 
@@ -241,8 +245,6 @@ class Producer:
             self.__messages_lock.release_write()
 
         if ex is not None: raise e
-
-        print("Messages flushed")
 
     def close(self):
         self.__stopped = True
