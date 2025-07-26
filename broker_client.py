@@ -237,12 +237,14 @@ class BrokerClient:
     def _create_request(
         self, req_type: int, values: list[Tuple[int, Any]] = None, request_needs_authentication: bool = False
     ) -> bytes:
-        req_bytes = req_type.to_bytes(length=INT_SIZE, byteorder=ENDIAS)
+        req_bytes = self.__val_to_bytes(req_type)
 
         if values != None:
             for reqValKey, val in values:
-                if val != None:
+                if val != None and reqValKey != MESSAGE:
                     req_bytes += self.__val_to_bytes(reqValKey) + self.__val_to_bytes(val)
+                elif val != None and reqValKey == MESSAGE:
+                    req_bytes += self.__val_to_bytes(reqValKey) + self.__val_to_bytes(len(val[1])) + self.__val_to_bytes(len(val[0])) + (val[1] if val[1] is not None else bytes([])) + val[0]
 
         if self._conf._authentication_enable and request_needs_authentication:
             req_bytes += (
@@ -252,7 +254,7 @@ class BrokerClient:
                 + self.__val_to_bytes(self._conf._password)
             )
 
-        return self.__val_to_bytes(LONG_SIZE + len(req_bytes), LONG_SIZE) + req_bytes
+        return self.__val_to_bytes(INT_SIZE + len(req_bytes), INT_SIZE) + req_bytes
     
     def close(self):
         self.__stopped = True
@@ -314,9 +316,9 @@ class BrokerClient:
 
     def __val_to_bytes(self, val: Any, numeric_size: int | None = None) -> bytes:
         if isinstance(val, int):
-            return val.to_bytes(length=4 if numeric_size is None else numeric_size, byteorder=ENDIAS)
+            return val.to_bytes(length=INT_SIZE if numeric_size is None else numeric_size, byteorder=ENDIAS)
         elif isinstance(val, str):
-            return len(val).to_bytes(length=4, byteorder=ENDIAS) + val.encode()
+            return len(val).to_bytes(length=INT_SIZE, byteorder=ENDIAS) + val.encode()
         else:
             raise Exception("Invalid request value of type ", type(val))
         

@@ -1,6 +1,7 @@
 from broker_client import BrokerClient, BrokerClientConf
 from producer import Producer, ProducerConf
 from constants import *
+import time
 
 def on_delivery_callback(message: bytes, key: bytes | None, exception: Exception | None):
     if exception != None:
@@ -26,9 +27,11 @@ queue_name = input("Enter the queue you want to produce messages to: ")
 
 client.create_queue(queue=queue_name, partitions=3, replication_factor=1)
 
-producer_conf = ProducerConf(queue=queue_name, wait_ms=1000, max_batch_size=16384)
+producer_conf = ProducerConf(queue=queue_name, wait_ms=5000, max_batch_size=163840)
 
 producer = Producer(client=client, conf=producer_conf)
+
+start = time.time()
 
 while True:
     message = input("Enter a message (type 'exit' to stop): ")
@@ -39,6 +42,16 @@ while True:
 
     if message == "exit": break
 
-    producer.produce(message, on_delivery=on_delivery_callback)
+    key = input("Enter a key for your message (Optional): ")
+
+    for i in range(1000000):
+        producer.produce(message=message, key=key, on_delivery=on_delivery_callback)
+
+    break
 
 producer.close()
+
+end = time.time()
+duration = end - start
+
+print(f"Duration: {duration:.3f} seconds")

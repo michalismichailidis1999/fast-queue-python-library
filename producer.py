@@ -1,7 +1,7 @@
 from typing import Callable, Dict
 from broker_client import *
 from constants import *
-from responses import GetQueuePartitionInfoResponse
+from responses import GetQueuePartitionInfoResponse, ProduceMessagesResponse
 import threading
 import time
 import mmh3
@@ -155,7 +155,7 @@ class Producer:
         
         self.__produce(message=message.encode(), key=(key.encode() if key is not None and key != "" else None), on_delivery=on_delivery)
 
-    def produce(
+    def __produce(
         self,
         message: bytes,
         key: bytes | None, 
@@ -169,7 +169,7 @@ class Producer:
         self.__messages_lock.acquire_write()
 
         try:
-            partition: int = self.__get_message_partition(key)
+            partition: int = 0 #self.__get_message_partition(key)
 
             if partition not in self.__partitions:
                 self.__partitions[partition] = []
@@ -198,10 +198,8 @@ class Producer:
 
         try:
             if len(self.__partitions.keys()) > 0:
-                print("Flushing messages...")
-
-                for partition in self.__partitions.keys():
-                    if len(self.__partitions[partition]) == 0:
+                for partition in range(self.__total_partitions):
+                    if partition not in self.__partitions or len(self.__partitions[partition]) == 0:
                         continue
 
                     partition_ex: Exception | None = None
@@ -214,37 +212,41 @@ class Producer:
                             raise Exception(f"No leader node for partition {partition} elected yet")
                         
                         try:
-                            partition_client.send_request(
-                                self.__client._create_request(
-                                    PRODUCE,
-                                    [
-                                        (QUEUE_NAME, self.__conf.queue),
-                                        (PARTITION, partition),
-                                    ]
-                                    + [
-                                        (MESSAGE, str(message))
-                                        for message, _ in self.__partitions[partition]
-                                    ],
+                            res = ProduceMessagesResponse(
+                                partition_client.send_request(
+                                    self.__client._create_request(
+                                        PRODUCE,
+                                        [
+                                            (QUEUE_NAME, self.__conf.queue),
+                                            (PARTITION, partition),
+                                        ]
+                                        + [
+                                            (MESSAGE, (message, key))
+                                            for message, key, _ in self.__partitions[partition]
+                                        ],
+                                    )
                                 )
                             )
                         except Exception as e:
                             partition_ex = e
                         finally:
                             for message, key, cb in self.__partitions[partition]:
-                                flushed_bytes += len(message)
+                                flushed_bytes += 0 if partition_ex is not None else len(message)
                                 if cb != None: cb(message, key, partition_ex)
+
+                            if partition_ex is None:
+                                print(f"Flushed {flushed_bytes} bytes from partition {partition}")
+                                self.__total_bytes_cached -= flushed_bytes
+                                del self.__partitions[partition]
                     except Exception as e:
                         raise e
-
-                    print(f"Flushed {flushed_bytes} bytes from partition {partition}")
-                    self.__total_bytes_cached -= flushed_bytes
-                    del self.__partitions[partition]
+                    
         except Exception as e:
             ex = e
         finally:
             self.__messages_lock.release_write()
 
-        if ex is not None: raise e
+        if ex is not None: raise ex
 
     def close(self):
         self.__stopped = True
@@ -256,7 +258,6 @@ class Producer:
         except Exception as e:
             print(f"Could not flush remaining messages. Reason: {e}")
 
-        self.close()
         self.__client.close()
 
         print("Producer closed")
@@ -273,7 +274,7 @@ class Producer:
         if key == None:
             ex: Exception = None
 
-            self.__partitions_lock.acquire()
+            self.__partitions_lock.acquire_read()
 
             partition: int = self.__prev_partition_sent
 
@@ -285,7 +286,7 @@ class Producer:
             except Exception as e:
                 ex = e
             finally:
-                self.__partitions_lock.release()
+                self.__partitions_lock.release_read()
 
             if ex != None:
                 raise ex

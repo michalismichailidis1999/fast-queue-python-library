@@ -183,3 +183,9 @@ class GetQueuePartitionInfoResponse:
                     port=node_info["port"],
                 )
             )
+
+class ProduceMessagesResponse:
+    def __init__(self, res_bytes: bytes):
+        res_fields = _response_fields_mapper(res_bytes, set([OK]))
+
+        self.success: bool = res_fields["success"]

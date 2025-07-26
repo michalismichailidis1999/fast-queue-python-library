@@ -67,7 +67,7 @@ class SocketConnection:
 
     def receive_bytes(self) -> bytes:
         res_size = (self.__sock if not self.__has_ssl_connection else self.__ssock).recv(
-            LONG_SIZE
+            INT_SIZE
         )
 
         if len(res_size) <= 0:

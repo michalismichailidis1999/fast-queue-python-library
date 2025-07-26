@@ -1,16 +1,17 @@
+import ctypes
+
 # Generic
-BOOL_SIZE = 1
-INT_SIZE = 4
-LONG_SIZE = 4
+BOOL_SIZE = ctypes.sizeof(ctypes.c_bool)
+INT_SIZE = ctypes.sizeof(ctypes.c_int)
+LONG_LONG_SIZE = ctypes.sizeof(ctypes.c_longlong)
 
 # Request Types
 CREATE_QUEUE = 1
 DELETE_QUEUE = 2
-LIST_QUEUES = 3
-PRODUCE = 4
-CONSUMER_CONNECT = 5
-CONSUME = 6
-ACK = 7
+PRODUCE = 3
+CONSUMER_CONNECT = 4
+CONSUME = 5
+ACK = 6
 GET_CONTROLLERS_CONNECTION_INFO = 8
 GET_CONTROLLER_LEADER_ID = 9
 GET_QUEUE_PARTITIONS_INFO = 10
