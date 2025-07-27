@@ -8,6 +8,7 @@ import mmh3
 import random
 from socket_client import SocketClient
 from lock import ReadWriteLock
+import asyncio
 
 class ProducerConf:
 
@@ -41,9 +42,15 @@ class Producer:
         self.__partitions: Dict[
             int, list[Tuple[bytes, bytes | None, Callable[[bytes, bytes | None, Exception], None]]]
         ] = {}
+
+        self.__partitions_buffer: Dict[
+            int, list[Tuple[bytes, bytes | None, Callable[[bytes, bytes | None, Exception], None]]]
+        ] = {}
+
         self.__total_bytes_cached = 0
 
         self.__messages_lock: ReadWriteLock = ReadWriteLock()
+        self.__cached_messages_lock: ReadWriteLock = ReadWriteLock()
         self.__partitions_lock: ReadWriteLock = ReadWriteLock()
 
         self.__send_messages_in_batches: bool = self.__conf.wait_ms > 0
@@ -144,7 +151,7 @@ class Producer:
 
             time.sleep(self.__fetch_info_wait_time_sec)
 
-    def produce(
+    async def produce(
         self,
         message: str,
         key: str = None,
@@ -153,9 +160,9 @@ class Producer:
         if message is None or message == "":
             raise ValueError("Message was empty")
         
-        self.__produce(message=message.encode(), key=(key.encode() if key is not None and key != "" else None), on_delivery=on_delivery)
+        await self.__produce(message=message.encode(), key=(key.encode() if key is not None and key != "" else None), on_delivery=on_delivery)
 
-    def __produce(
+    async def __produce(
         self,
         message: bytes,
         key: bytes | None, 
@@ -166,7 +173,7 @@ class Producer:
 
         ex: Exception = None
 
-        self.__messages_lock.acquire_write()
+        self.__cached_messages_lock.acquire_write()
 
         try:
             partition: int = 0 #self.__get_message_partition(key)
@@ -180,7 +187,7 @@ class Producer:
         except Exception as e:
             ex = e
         finally:
-            self.__messages_lock.release_write()
+            self.__cached_messages_lock.release_write()
 
         if ex != None:
             raise ex
@@ -189,57 +196,53 @@ class Producer:
             self.__conf.max_batch_size <= self.__total_bytes_cached
             or not self.__send_messages_in_batches
         ):
-            self.flush()
+            await self.flush()
 
-    def flush(self):
+    async def flush(self):
         ex: Exception = None
+
+        self.__cached_messages_lock.acquire_write()
+
+        try:
+            for partition in range(self.__total_partitions):
+                if partition not in self.__partitions: continue
+
+                if partition not in self.__partitions_buffer:
+                    self.__partitions_buffer[partition] = self.__partitions[partition]
+                elif len(self.__partitions_buffer[partition]) >= 1000: continue
+                else: self.__partitions_buffer[partition].append(self.__partitions[partition])
+
+                del self.__partitions[partition]
+        except Exception as e:
+            ex = e
+        finally:
+            self.__cached_messages_lock.release_write()
+
+        if ex is not None: raise ex
 
         self.__messages_lock.acquire_write()
 
         try:
-            if len(self.__partitions.keys()) > 0:
-                for partition in range(self.__total_partitions):
-                    if partition not in self.__partitions or len(self.__partitions[partition]) == 0:
-                        continue
+            if len(self.__partitions_buffer.keys()) > 0:
+                partitions_to_remove = []
 
-                    partition_ex: Exception | None = None
-                    flushed_bytes: int = 0
+                tasks = [
+                    self.__flush_partition_messages(partition=partition)
+                    for partition in range(self.__total_partitions)
+                ]
 
-                    try:
-                        partition_client = self._get_leader_node_socket_client(partition_id=partition)
+                results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                        if partition_client == None:
-                            raise Exception(f"No leader node for partition {partition} elected yet")
-                        
-                        try:
-                            res = ProduceMessagesResponse(
-                                partition_client.send_request(
-                                    self.__client._create_request(
-                                        PRODUCE,
-                                        [
-                                            (QUEUE_NAME, self.__conf.queue),
-                                            (PARTITION, partition),
-                                        ]
-                                        + [
-                                            (MESSAGE, (message, key))
-                                            for message, key, _ in self.__partitions[partition]
-                                        ],
-                                    )
-                                )
-                            )
-                        except Exception as e:
-                            partition_ex = e
-                        finally:
-                            for message, key, cb in self.__partitions[partition]:
-                                flushed_bytes += 0 if partition_ex is not None else len(message)
-                                if cb != None: cb(message, key, partition_ex)
+                for result in results:
+                    if isinstance(result, Exception):
+                        print(f"Error occured whilre flushing partition messages. {result}")
+                    else:
+                        partitions_to_remove.append(result[0])
+                        self.__total_bytes_cached -= result[1]
 
-                            if partition_ex is None:
-                                print(f"Flushed {flushed_bytes} bytes from partition {partition}")
-                                self.__total_bytes_cached -= flushed_bytes
-                                del self.__partitions[partition]
-                    except Exception as e:
-                        raise e
+                for partition in partitions_to_remove:
+                    if partition in self.__partitions_buffer: 
+                        del self.__partitions_buffer[partition]
                     
         except Exception as e:
             ex = e
@@ -248,13 +251,53 @@ class Producer:
 
         if ex is not None: raise ex
 
+    async def __flush_partition_messages(self, partition: int) -> Tuple[int, int]:
+        if partition not in self.__partitions_buffer or len(self.__partitions_buffer[partition]) == 0: return (-1, 0)
+
+        partition_ex: Exception | None = None
+        flushed_bytes: int = 0
+
+        try:
+            partition_client = self._get_leader_node_socket_client(partition_id=partition)
+
+            if partition_client == None:
+                raise Exception(f"No leader node for partition {partition} elected yet")
+            
+            try:
+                res = ProduceMessagesResponse(
+                    partition_client.send_request(
+                        self.__client._create_request(
+                            PRODUCE,
+                            [
+                                (QUEUE_NAME, self.__conf.queue),
+                                (PARTITION, partition),
+                                (MESSAGES, [(message, key) for message, key, _ in self.__partitions_buffer[partition]])
+                            ]
+                        )
+                    )
+                )
+            except Exception as e:
+                partition_ex = e
+            finally:
+                for message, key, cb in self.__partitions_buffer[partition]:
+                    flushed_bytes += 0 if partition_ex is not None else len(message)
+                    if cb != None: cb(message, key, partition_ex)
+
+                if partition_ex is None:
+                    print(f"Flushed {flushed_bytes} bytes from partition {partition}")
+                    return (partition, flushed_bytes)
+                
+                return (-1, 0)
+        except Exception as e:
+            raise e
+
     def close(self):
         self.__stopped = True
 
         try:
             if self.__total_bytes_cached > 0:
                 print("Trying to flush remaining messages before shutdown..")
-                self.flush()
+                asyncio.run(self.flush())
         except Exception as e:
             print(f"Could not flush remaining messages. Reason: {e}")
 
@@ -266,7 +309,7 @@ class Producer:
         while not self.__stopped:
             time.sleep(self.__conf.wait_ms / 1000)
             try:
-                self.flush()
+                asyncio.run(self.flush())
             except Exception as e:
                 print(f"Error occured while flushing messages periodically. {e}")
 

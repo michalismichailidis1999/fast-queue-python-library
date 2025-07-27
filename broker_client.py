@@ -236,17 +236,75 @@ class BrokerClient:
 
     def _create_request(
         self, req_type: int, values: list[Tuple[int, Any]] = None, request_needs_authentication: bool = False
-    ) -> bytes:
-        req_bytes = self.__val_to_bytes(req_type)
+    ) -> bytearray:
+        total_bytes: int = 8
+
+        if self._conf._authentication_enable and request_needs_authentication:
+            total_bytes += 4 * INT_SIZE + len(self._conf._username) + len(self._conf._password)
+
+        messages_total_bytes = 0
 
         if values != None:
             for reqValKey, val in values:
-                if val != None and reqValKey != MESSAGE:
-                    req_bytes += self.__val_to_bytes(reqValKey) + self.__val_to_bytes(val)
-                elif val != None and reqValKey == MESSAGE:
-                    req_bytes += self.__val_to_bytes(reqValKey) + self.__val_to_bytes(len(val[1])) + self.__val_to_bytes(len(val[0])) + (val[1] if val[1] is not None else bytes([])) + val[0]
+                total_bytes += INT_SIZE
+
+                if val != None and reqValKey != MESSAGES:
+                    total_bytes += self.__get_val_bytes(val=val)
+                elif val != None and reqValKey == MESSAGES:
+                    total_bytes += INT_SIZE
+                    
+                    for message, key in val:
+                        message_bytes = 2 * INT_SIZE + len(message) + len(key)
+                        total_bytes += message_bytes
+                        messages_total_bytes += message_bytes
+
+        req_bytes = bytearray(total_bytes)
+
+        req_bytes[0:4] = self.__val_to_bytes(total_bytes)
+        req_bytes[4:8] = self.__val_to_bytes(req_type)
+
+        pos = 8
+
+        val_bytes = 0
+
+        if values != None:
+            for reqValKey, val in values:
+                req_bytes[pos:(pos + INT_SIZE)] = self.__val_to_bytes(reqValKey)
+                pos += INT_SIZE
+                
+                if val != None and reqValKey != MESSAGES:
+                    val_bytes = self.__get_val_bytes(val)
+
+                    req_bytes[pos:(pos + val_bytes)] = self.__val_to_bytes(val)
+                    pos += val_bytes
+                elif val != None and reqValKey == MESSAGES:
+                    req_bytes[pos:(pos + INT_SIZE)] = self.__val_to_bytes(messages_total_bytes)
+                    pos += INT_SIZE
+
+                    for message, key in val:
+                        key_len = len(key)
+                        message_len = len(message)
+
+                        req_bytes[pos:(pos + INT_SIZE)] = self.__val_to_bytes(key_len)
+                        pos += INT_SIZE
+
+                        req_bytes[pos:(pos + INT_SIZE)] = self.__val_to_bytes(message_len)
+                        pos += INT_SIZE
+
+                        if key_len > 0:
+                            req_bytes[pos:(pos + key_len)] = key
+                            pos += key_len
+
+                        req_bytes[pos:(pos + message_len)] = message
+                        pos += message_len
 
         if self._conf._authentication_enable and request_needs_authentication:
+            req_bytes[pos:(pos + INT_SIZE)] = self.__val_to_bytes(USERNAME)
+            pos += INT_SIZE
+
+            req_bytes[pos:(pos + INT_SIZE + len(self._conf._username))]
+            pos += INT_SIZE + len(self._conf._username)
+
             req_bytes += (
                 self.__val_to_bytes(USERNAME)
                 + self.__val_to_bytes(self._conf._username)
@@ -254,7 +312,7 @@ class BrokerClient:
                 + self.__val_to_bytes(self._conf._password)
             )
 
-        return self.__val_to_bytes(INT_SIZE + len(req_bytes), INT_SIZE) + req_bytes
+        return req_bytes
     
     def close(self):
         self.__stopped = True
@@ -314,9 +372,16 @@ class BrokerClient:
         finally:
             self.__lock.release_write()
 
-    def __val_to_bytes(self, val: Any, numeric_size: int | None = None) -> bytes:
+    def __get_val_bytes(self, val: Any) -> int:
         if isinstance(val, int):
-            return val.to_bytes(length=INT_SIZE if numeric_size is None else numeric_size, byteorder=ENDIAS)
+            return INT_SIZE
+        elif isinstance(val, str):
+            return INT_SIZE + len(val)
+        else: return 0
+
+    def __val_to_bytes(self, val: Any) -> bytes:
+        if isinstance(val, int):
+            return val.to_bytes(length=INT_SIZE, byteorder=ENDIAS)
         elif isinstance(val, str):
             return len(val).to_bytes(length=INT_SIZE, byteorder=ENDIAS) + val.encode()
         else:

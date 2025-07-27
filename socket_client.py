@@ -62,7 +62,7 @@ class SocketConnection:
         except Exception as e:
             print(f"Could not close socket connection. {e}")
 
-    def send_bytes(self, req: bytes):
+    def send_bytes(self, req: bytearray):
         (self.__sock if not self.__has_ssl_connection else self.__ssock).sendall(req)
 
     def receive_bytes(self) -> bytes:
@@ -142,7 +142,7 @@ class SocketClient:
 
         self.__pool.put(conn)
 
-    def send_request(self, req: bytes) -> bytes:
+    def send_request(self, req: bytearray) -> bytes:
         conn: SocketConnection = None
 
         retries = self.__conf._retries

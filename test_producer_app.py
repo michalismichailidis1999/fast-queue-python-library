@@ -2,6 +2,7 @@ from broker_client import BrokerClient, BrokerClientConf
 from producer import Producer, ProducerConf
 from constants import *
 import time
+import asyncio
 
 def on_delivery_callback(message: bytes, key: bytes | None, exception: Exception | None):
     if exception != None:
@@ -27,7 +28,7 @@ queue_name = input("Enter the queue you want to produce messages to: ")
 
 client.create_queue(queue=queue_name, partitions=3, replication_factor=1)
 
-producer_conf = ProducerConf(queue=queue_name, wait_ms=5000, max_batch_size=163840)
+producer_conf = ProducerConf(queue=queue_name, wait_ms=3000, max_batch_size=16384)
 
 producer = Producer(client=client, conf=producer_conf)
 
@@ -44,8 +45,8 @@ while True:
 
     key = input("Enter a key for your message (Optional): ")
 
-    for i in range(1000000):
-        producer.produce(message=message, key=key, on_delivery=on_delivery_callback)
+    for i in range(10000):
+        asyncio.run(producer.produce(message=f"{message} {i}", key=f"{key} {i}", on_delivery=on_delivery_callback))
 
     break
 
