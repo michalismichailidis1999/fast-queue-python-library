@@ -51,6 +51,7 @@ class Producer:
 
         self.__messages_lock: ReadWriteLock = ReadWriteLock()
         self.__cached_messages_lock: ReadWriteLock = ReadWriteLock()
+        self.__cached_bytes_lock: ReadWriteLock = ReadWriteLock()
         self.__partitions_lock: ReadWriteLock = ReadWriteLock()
 
         self.__send_messages_in_batches: bool = self.__conf.wait_ms > 0
@@ -78,6 +79,7 @@ class Producer:
             f"Producer initialized for queue {self.__conf.queue}"
         )
 
+    # TODO: Fix
     def __retrieve_queue_partitions_info(self, retries: int = 1, called_from_contructor: bool = False):
         initial_retries: int = retries
         success: bool = False
@@ -101,7 +103,7 @@ class Producer:
 
                     for partition_id in range(res.total_partitions):
                         if partition_id not in self.__partitions_clients:
-                            self.__partitions_nodes[partition_id] = None
+                            self.__partitions_clients[partition_id] = None
 
                     self.__total_partitions = res.total_partitions
 
@@ -176,13 +178,13 @@ class Producer:
         self.__cached_messages_lock.acquire_write()
 
         try:
-            partition: int = 0 #self.__get_message_partition(key)
+            partition: int = self.__get_message_partition(key)
 
             if partition not in self.__partitions:
                 self.__partitions[partition] = []
 
             self.__partitions[partition].append((message, key, on_delivery))
-            self.__total_bytes_cached += len(message)
+            self.__increment_cached_bytes(len(message))
             self.__prev_partition_sent = partition
         except Exception as e:
             ex = e
@@ -195,12 +197,12 @@ class Producer:
         if (
             self.__conf.max_batch_size <= self.__total_bytes_cached
             or not self.__send_messages_in_batches
-        ):
-            await self.flush()
+        ): await self.flush()
 
     async def flush(self):
         ex: Exception = None
 
+        self.__messages_lock.acquire_write()
         self.__cached_messages_lock.acquire_write()
 
         try:
@@ -210,7 +212,7 @@ class Producer:
                 if partition not in self.__partitions_buffer:
                     self.__partitions_buffer[partition] = self.__partitions[partition]
                 elif len(self.__partitions_buffer[partition]) >= 1000: continue
-                else: self.__partitions_buffer[partition].append(self.__partitions[partition])
+                else: self.__partitions_buffer[partition] + self.__partitions[partition]
 
                 del self.__partitions[partition]
         except Exception as e:
@@ -218,9 +220,9 @@ class Producer:
         finally:
             self.__cached_messages_lock.release_write()
 
-        if ex is not None: raise ex
-
-        self.__messages_lock.acquire_write()
+        if ex is not None:
+            self.__messages_lock.release_write()
+            raise ex
 
         try:
             if len(self.__partitions_buffer.keys()) > 0:
@@ -235,10 +237,10 @@ class Producer:
 
                 for result in results:
                     if isinstance(result, Exception):
-                        print(f"Error occured whilre flushing partition messages. {result}")
+                        print(f"Error occured while flushing partition messages. {result}")
                     else:
                         partitions_to_remove.append(result[0])
-                        self.__total_bytes_cached -= result[1]
+                        self.__increment_cached_bytes(-result[1])
 
                 for partition in partitions_to_remove:
                     if partition in self.__partitions_buffer: 
@@ -306,6 +308,7 @@ class Producer:
         print("Producer closed")
 
     def __flush_messages_batch(self):
+        return
         while not self.__stopped:
             time.sleep(self.__conf.wait_ms / 1000)
             try:
@@ -384,6 +387,13 @@ class Producer:
         self.__partitions_lock.release_read()
 
         return socket_client
-        
+
+    def __increment_cached_bytes(self, inc: int) -> None:
+        self.__cached_bytes_lock.acquire_write()
+
+        self.__total_bytes_cached += inc
+
+        self.__cached_bytes_lock.release_write()
+
     def __del__(self):
         self.close()

@@ -28,7 +28,7 @@ queue_name = input("Enter the queue you want to produce messages to: ")
 
 client.create_queue(queue=queue_name, partitions=3, replication_factor=1)
 
-producer_conf = ProducerConf(queue=queue_name, wait_ms=3000, max_batch_size=16384)
+producer_conf = ProducerConf(queue=queue_name, wait_ms=3000, max_batch_size=163840)
 
 producer = Producer(client=client, conf=producer_conf)
 
@@ -45,8 +45,9 @@ while True:
 
     key = input("Enter a key for your message (Optional): ")
 
-    for i in range(10000):
-        asyncio.run(producer.produce(message=f"{message} {i}", key=f"{key} {i}", on_delivery=on_delivery_callback))
+    for i in range(100000):
+        asyncio.run(producer.produce(message=f"{message} {i}", key=f"{key} {i}"))#, on_delivery=on_delivery_callback))
+        if i % 10000 == 0: print(i)
 
     break
 
