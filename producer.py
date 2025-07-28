@@ -59,8 +59,8 @@ class Producer:
         self.__seed = random.randint(100, 1000)
 
         self.__total_partitions = 0
-        self.__partitions_clients: Dict[int, SocketClient | None] = {}
-        self.__partitions_nodes: Dict[int, int] = {}
+        self.__partitions_clients: Dict[int, SocketClient | None] = {} # (Node Id - SocketClient) Pair
+        self.__partitions_nodes: Dict[int, int] = {} # (Partition Id - Node Id) Pair
 
         self.__stopped: bool = False
 
@@ -101,20 +101,21 @@ class Producer:
                     )
 
                     for partition_id in range(res.total_partitions):
-                        if partition_id not in self.__partitions_clients:
-                            self.__partitions_clients[partition_id] = None
+                        self.__set_partition_node(partition_id=partition_id, node_id=-1, if_not_exists_only=True)
 
-                    self.__total_partitions = res.total_partitions
+                    self.__set_total_partitions(res.total_partitions)
 
                     to_keep = set()
+                    partitions_to_keep = set()
 
                     for partition_leader in res.partition_leader_nodes:
-                        self.__partitions_nodes[partition_leader.partition_id] = partition_leader.node_id
                         to_keep.add(partition_leader.node_id)
+                        partitions_to_keep.add(partition_leader.partition_id)
 
                         conn_info: Tuple[str, int] | None = self.__get_leader_node_conenction_info(partition_leader.node_id)
 
                         if conn_info is not None and conn_info[0] == partition_leader.address and conn_info[1] == partition_leader.port:
+                            self.__set_partition_node(partition_id=partition_id, node_id=partition_leader.node_id)
                             continue
                         
                         self.__replace_leader_node_socket_client(
@@ -123,6 +124,9 @@ class Producer:
                             new_port=partition_leader.port,
                         )
 
+                        self.__set_partition_node(partition_id=partition_id, node_id=partition_leader.node_id)
+
+                    self.__remove_partition_nodes(partitions_to_keep)
                     self.__remove_unused_controller_nodes(to_keep)
 
                     if called_from_contructor:
@@ -259,7 +263,7 @@ class Producer:
         flushed_bytes: int = 0
 
         try:
-            partition_client = self._get_leader_node_socket_client(partition_id=partition)
+            partition_client = self.__get_leader_node_socket_client(partition_id=partition)
 
             if partition_client == None:
                 raise Exception(f"No leader node for partition {partition} elected yet")
@@ -363,6 +367,17 @@ class Producer:
 
         return conn_info
     
+    def __remove_partition_nodes(self, to_keep: Set[int]) -> None:
+        self.__partitions_lock.acquire_write()
+
+        partition_ids = [i for i in range(self.__total_partitions)]
+
+        for partition_id in partition_ids:
+            if partition_id not in to_keep:
+                self.__partitions_nodes[partition_id] = None
+
+        self.__partitions_lock.release_write()
+    
     def __remove_unused_controller_nodes(self, to_keep: Set[int]):
         self.__partitions_lock.acquire_write()
 
@@ -376,12 +391,12 @@ class Producer:
         finally:
             self.__partitions_lock.release_write()
 
-    def _get_leader_node_socket_client(self, partition_id: int) -> SocketClient | None:
+    def __get_leader_node_socket_client(self, partition_id: int) -> SocketClient | None:
         self.__partitions_lock.acquire_read()
 
         node_id: int = self.__partitions_nodes[partition_id] if partition_id in self.__partitions_nodes else -1
 
-        socket_client = self.__partitions_clients[node_id] if node_id in self.__partitions_clients else None
+        socket_client = self.__partitions_clients[node_id] if node_id is not None and node_id in self.__partitions_clients else None
 
         self.__partitions_lock.release_read()
 
@@ -393,6 +408,21 @@ class Producer:
         self.__total_bytes_cached += inc
 
         self.__cached_bytes_lock.release_write()
+
+    def __set_partition_node(self, partition_id: int, node_id: int, if_not_exists_only: bool = False) -> None:
+        self.__partitions_lock.acquire_write()
+
+        if (if_not_exists_only and partition_id not in self.__partitions_nodes) or True:
+            self.__partitions_nodes[partition_id] = node_id if node_id > 0 else None
+
+        self.__partitions_lock.release_write()
+
+    def __set_total_partitions(self, total_partitions: int) -> None:
+        self.__partitions_lock.acquire_write()
+
+        self.__total_partitions = total_partitions
+
+        self.__partitions_lock.release_write()
 
     def __del__(self):
         self.close()

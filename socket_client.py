@@ -102,9 +102,9 @@ class ConnectionPool:
 
         self.__wait_seconds_to_add_new_conn: int = 5
 
-        self.__add_connection(address=address, port=port)
-
         self.__stopped: bool = False
+
+        self.__add_connection(address=address, port=port)
 
         t = threading.Thread(target=self.__keep_pool_connections_to_maximum, daemon=True)
         t.start()
@@ -143,6 +143,8 @@ class ConnectionPool:
         return conn
 
     def return_connection(self, conn: SocketConnection | None, is_new_conn: bool = False) -> None:
+        if self.__stopped: return
+
         self.__lock.acquire_write()
 
         if not is_new_conn: self.__borrowed_connections -= 1
