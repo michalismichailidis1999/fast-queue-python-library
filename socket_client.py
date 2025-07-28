@@ -1,11 +1,12 @@
 from socket import socket, AF_INET, SOCK_STREAM
 import time
-from queue import Queue
+from queue import Empty, Queue
 import ssl
 import threading
 from typing import Tuple
 from constants import *
 from exceptions import RetryableException, FastQueueException
+from lock import ReadWriteLock
 
 class SocketClientConf:
 
@@ -87,29 +88,70 @@ class SocketConnection:
             return True
         
         return False
-
-class SocketClient:
-
-    def __init__(self, address: str, port: int, conf: SocketClientConf, max_pool_connections: int = -1) -> None:
+    
+class ConnectionPool:
+    def __init__(self, address:str, port: int, conf: SocketClientConf, max_pool_connections: int):
+        self.__pool: Queue[SocketConnection] = Queue()
         self.__address: str = address
         self.__port: int = port
-        self.__pool: Queue[SocketConnection] = Queue()
-        self.__conf = conf
-        self.__add_connection(
-            address=address if address != "localhost" else "127.0.0.1", port=port
-        )
+        self.__max_pool_connections: int = max_pool_connections
+        self.__conf: SocketClientConf = conf
+        self.__connections_count: int = 0
+        self.__borrowed_connections: int = 0
+        self.__lock: ReadWriteLock = ReadWriteLock()
 
-        self.__max_pool_connections: int = conf._max_pool_connections
+        self.__wait_seconds_to_add_new_conn: int = 5
 
-        if max_pool_connections > 0:
-            self.__max_pool_connections = max_pool_connections
+        self.__add_connection(address=address, port=port)
 
-        self.__stopped = False
+        self.__stopped: bool = False
+
         t = threading.Thread(target=self.__keep_pool_connections_to_maximum, daemon=True)
         t.start()
 
-    def get_connection_info(self) -> Tuple[str, int]:
-        return (self.__address, self.__port)
+    def get_connections_count(self) -> int:
+        self.__lock.acquire_read()
+
+        count = self.__connections_count + self.__borrowed_connections
+
+        self.__lock.release_read()
+
+        return count
+    
+    def get_connection(self) -> SocketConnection | None:
+        conn: SocketConnection | None = None
+
+        try:
+            conn = self.__pool.get(
+                block=True,
+                timeout=(
+                    int(self.__conf._timeoutms / 1000) + 1
+                    if self.__conf._timeoutms is not None
+                    else None
+                ),
+            )
+        except: return None
+
+        if conn is not None:
+            self.__lock.acquire_write()
+
+            self.__connections_count -= 1
+            self.__borrowed_connections += 1
+
+            self.__lock.release_write()
+
+        return conn
+
+    def return_connection(self, conn: SocketConnection | None, is_new_conn: bool = False) -> None:
+        self.__lock.acquire_write()
+
+        if not is_new_conn: self.__borrowed_connections -= 1
+
+        if conn is not None:
+            self.__connections_count += 1
+            self.__pool.put(conn)
+
+        self.__lock.release_write()
 
     def __add_connection(self, address: str, port: int):
         # Create a TCP/IP socket
@@ -124,7 +166,7 @@ class SocketClient:
         if self.__conf._ssl_enable:
             context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
 
-            context.load_verify_locations(self.conf.root_cert)
+            context.load_verify_locations(self.__conf._root_cert)
 
             if self.conf.cert and self.conf.cert_key:
                 context.load_cert_chain(
@@ -140,7 +182,60 @@ class SocketClient:
 
         conn: SocketConnection = SocketConnection(sock=sock, ssl_sock=ssock)
 
-        self.__pool.put(conn)
+        self.return_connection(conn=conn, is_new_conn=True)
+
+    def __keep_pool_connections_to_maximum(self):
+        conns_diff: int = 0
+
+        while not self.__stopped:
+            conns_diff = self.__max_pool_connections - self.get_connections_count()
+
+            if conns_diff == 0:
+                time.sleep(self.__wait_seconds_to_add_new_conn)
+                continue
+
+            for _ in range(conns_diff):
+                self.__add_connection(self.__address, self.__port)
+
+            if self.__stopped: break
+            
+            time.sleep(self.__wait_seconds_to_add_new_conn)
+
+    def close(self):
+        self.__stopped = True
+
+        while not self.__pool.empty():
+            try:
+                conn = self.__pool.get_nowait()
+
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except:
+                        pass
+            except Empty: break
+            except Exception as e:
+                print(
+                    f"Error occured while trying to close connection to the broker. Exception: {e}"
+                )
+                break
+
+class SocketClient:
+
+    def __init__(self, address: str, port: int, conf: SocketClientConf, max_pool_connections: int = -1) -> None:
+        self.__address: str = address
+        self.__port: int = port
+        self.__conf = conf
+
+        self.__pool: ConnectionPool = ConnectionPool(
+            address=address,
+            port=port,
+            conf=conf,
+            max_pool_connections=(max_pool_connections if max_pool_connections > 0 else conf._max_pool_connections),
+        )
+
+    def get_connection_info(self) -> Tuple[str, int]:
+        return (self.__address, self.__port)
 
     def send_request(self, req: bytearray) -> bytes:
         conn: SocketConnection = None
@@ -150,16 +245,9 @@ class SocketClient:
 
         while retries > 0:
             try:
-                try:
-                    conn = self.__pool.get(
-                        block=True,
-                        timeout=(
-                            int(self.__conf._timeoutms / 1000) + 1
-                            if self.__conf._timeoutms is not None
-                            else None
-                        ),
-                    )
-                except:
+                conn = self.__pool.get_connection() if conn is None else conn
+
+                if conn is None:
                     raise RetryableException(
                         error_code=CONNECTION_ERROR,
                         error_message="No available connection to send request",
@@ -174,6 +262,7 @@ class SocketClient:
 
                     if not response or len(response) == 0:
                         conn.close()
+                        self.__pool.return_connection(None)
                         raise RetryableException(
                             error_code=CONNECTION_ERROR,
                             error_message="Could not receive response from the socket connection",
@@ -184,8 +273,6 @@ class SocketClient:
                     res_err_code = self.__get_response_error_code(response)
 
                     if res_err_code != NO_ERROR:
-                        self.__pool.put(conn)
-
                         res_err_message = self.__get_response_error(response)
 
                         if self.__is_error_retryable(res_err_code):
@@ -195,15 +282,19 @@ class SocketClient:
                             retries -= 1
                             continue
 
+                        self.__pool.return_connection(conn)
+
                         raise FastQueueException(res_err_code, res_err_message)
 
-                    self.__pool.put(conn)
+                    self.__pool.return_connection(conn)
 
                     return response
                 except TimeoutError:
                     if not conn.fail_occured():
-                        self.__pool.put(conn)
-                    else: conn.close()
+                        self.__pool.return_connection(conn)
+                    else:
+                        conn.close()
+                        self.__pool.return_connection(None)
 
                     raise RetryableException(
                         error_code=TIMEOUT_ERROR,
@@ -211,11 +302,12 @@ class SocketClient:
                     )
                 except Exception as e:
                     conn.close()
+                    self.__pool.return_connection(None)
                     raise e
             except RetryableException as e:
                 retries -= 1
-                if retries > 0: time.sleep(self.__conf._retry_wait_ms / 1000)
                 err = e
+                if retries > 0: time.sleep(self.__conf._retry_wait_ms / 1000)
             except Exception as e:
                 raise Exception(f"{e}")
 
@@ -224,16 +316,7 @@ class SocketClient:
         return None
     
     def close(self):
-        self.__stopped = True
-        while not self.__pool.empty():
-            try:
-                conn = self.__pool.get_nowait()
-                conn.close()
-            except Exception as e:
-                print(
-                    f"Error occured while trying to close connection to the broker. Exception: {e}"
-                )
-                break
+        self.__pool.close()
 
     def __get_response_error_code(self, res: bytes) -> int:
         return int.from_bytes(bytes=res[:INT_SIZE], byteorder=ENDIAS)
@@ -245,16 +328,6 @@ class SocketClient:
 
     def __is_error_retryable(self, error_code: int):
         return error_code in [CONNECTION_ERROR, TIMEOUT_ERROR]
-
-    def __keep_pool_connections_to_maximum(self):
-        while not self.__stopped:
-            qsize = self.__pool.qsize()
-            for _ in range(qsize, self.__max_pool_connections + 1):
-                self.__add_connection(self.__address, self.__port)
-
-            if self.__stopped: break
-            
-            time.sleep(5)
 
     def __del__(self):
         self.close()

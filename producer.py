@@ -79,7 +79,6 @@ class Producer:
             f"Producer initialized for queue {self.__conf.queue}"
         )
 
-    # TODO: Fix
     def __retrieve_queue_partitions_info(self, retries: int = 1, called_from_contructor: bool = False):
         initial_retries: int = retries
         success: bool = False
