@@ -33,24 +33,27 @@ class ProducerConf:
 
 class Producer:
 
-    def __init__(self, client: BrokerClient, conf: ProducerConf) -> None:
+    def __init__(self, client: BrokerClient, conf: ProducerConf, on_delivery_callabck: Callable[[bytes, bytes | None, Exception], None] = None) -> None:
         if client._create_queue_command_run: time.sleep(5)
 
         self.__client: BrokerClient = client
         self.__conf: ProducerConf = conf
 
-        self.__partitions: Dict[
+        self.__on_message_delivery_callback: Callable[[bytes, bytes | None, Exception], None] = on_delivery_callabck
+
+        self.__messages_first_buffer: Dict[
             int, list[Tuple[bytes, bytes | None, Callable[[bytes, bytes | None, Exception], None]]]
         ] = {}
 
-        self.__partitions_buffer: Dict[
+        self.__messages_second_buffer: Dict[
             int, list[Tuple[bytes, bytes | None, Callable[[bytes, bytes | None, Exception], None]]]
         ] = {}
 
         self.__total_bytes_cached = 0
 
-        self.__messages_lock: ReadWriteLock = ReadWriteLock()
-        self.__cached_messages_lock: ReadWriteLock = ReadWriteLock()
+        self.__messages_first_buffer_lock: ReadWriteLock = ReadWriteLock()
+        self.__messages_second_buffer_lock: ReadWriteLock = ReadWriteLock()
+        
         self.__cached_bytes_lock: ReadWriteLock = ReadWriteLock()
         self.__partitions_lock: ReadWriteLock = ReadWriteLock()
 
@@ -115,7 +118,7 @@ class Producer:
                         conn_info: Tuple[str, int] | None = self.__get_leader_node_conenction_info(partition_leader.node_id)
 
                         if conn_info is not None and conn_info[0] == partition_leader.address and conn_info[1] == partition_leader.port:
-                            self.__set_partition_node(partition_id=partition_id, node_id=partition_leader.node_id)
+                            self.__set_partition_node(partition_id=partition_leader.partition_id, node_id=partition_leader.node_id)
                             continue
                         
                         self.__replace_leader_node_socket_client(
@@ -124,7 +127,7 @@ class Producer:
                             new_port=partition_leader.port,
                         )
 
-                        self.__set_partition_node(partition_id=partition_id, node_id=partition_leader.node_id)
+                        self.__set_partition_node(partition_id=partition_leader.partition_id, node_id=partition_leader.node_id)
 
                     self.__remove_partition_nodes(partitions_to_keep)
                     self.__remove_unused_controller_nodes(to_keep)
@@ -178,21 +181,21 @@ class Producer:
 
         ex: Exception = None
 
-        self.__cached_messages_lock.acquire_write()
+        self.__messages_first_buffer_lock.acquire_write()
 
         try:
             partition: int = self.__get_message_partition(key)
 
-            if partition not in self.__partitions:
-                self.__partitions[partition] = []
+            if partition not in self.__messages_first_buffer:
+                self.__messages_first_buffer[partition] = []
 
-            self.__partitions[partition].append((message, key, on_delivery))
+            self.__messages_first_buffer[partition].append((message, key, on_delivery))
             self.__increment_cached_bytes(len(message))
             self.__prev_partition_sent = partition
         except Exception as e:
             ex = e
         finally:
-            self.__cached_messages_lock.release_write()
+            self.__messages_first_buffer_lock.release_write()
 
         if ex != None:
             raise ex
@@ -205,59 +208,62 @@ class Producer:
     async def flush(self):
         ex: Exception = None
 
-        self.__messages_lock.acquire_write()
-        self.__cached_messages_lock.acquire_write()
+        self.__messages_second_buffer_lock.acquire_write()
+        self.__messages_first_buffer_lock.acquire_write()
 
         try:
             for partition in range(self.__total_partitions):
-                if partition not in self.__partitions: continue
+                if partition not in self.__messages_first_buffer: continue
 
-                if partition not in self.__partitions_buffer:
-                    self.__partitions_buffer[partition] = self.__partitions[partition]
-                elif len(self.__partitions_buffer[partition]) >= 1000: continue
-                else: self.__partitions_buffer[partition] + self.__partitions[partition]
+                if partition not in self.__messages_second_buffer:
+                    self.__messages_second_buffer[partition] = self.__messages_first_buffer[partition]
+                else: 
+                    diff = abs(1000 - len(self.__messages_second_buffer[partition]))
+                    self.__messages_second_buffer[partition] += self.__messages_first_buffer[partition][:diff]
 
-                del self.__partitions[partition]
+                    if diff > len(self.__messages_first_buffer[partition]):
+                        del self.__messages_first_buffer[partition]
+                    else:
+                        self.__messages_first_buffer[partition] = self.__messages_first_buffer[partition][diff:]
         except Exception as e:
             ex = e
         finally:
-            self.__cached_messages_lock.release_write()
+            self.__messages_first_buffer_lock.release_write()
 
         if ex is not None:
-            self.__messages_lock.release_write()
+            self.__messages_second_buffer_lock.release_write()
             raise ex
 
         try:
-            if len(self.__partitions_buffer.keys()) > 0:
-                partitions_to_remove = []
+            partitions_to_remove = []
 
-                tasks = [
-                    self.__flush_partition_messages(partition=partition)
-                    for partition in range(self.__total_partitions)
-                ]
+            tasks = [
+                self.__flush_partition_messages(partition=partition)
+                for partition in range(self.__total_partitions)
+            ]
 
-                results = await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                for result in results:
-                    if isinstance(result, Exception):
-                        print(f"Error occured while flushing partition messages. {result}")
-                    else:
-                        partitions_to_remove.append(result[0])
-                        self.__increment_cached_bytes(-result[1])
+            for result in results:
+                if isinstance(result, Exception):
+                    print(f"Error occured while flushing partition messages. {result}")
+                else:
+                    partitions_to_remove.append(result[0])
+                    self.__increment_cached_bytes(-result[1])
 
-                for partition in partitions_to_remove:
-                    if partition in self.__partitions_buffer: 
-                        del self.__partitions_buffer[partition]
+            for partition in partitions_to_remove:
+                if partition in self.__partitions_buffer: 
+                    del self.__partitions_buffer[partition]
                     
         except Exception as e:
             ex = e
         finally:
-            self.__messages_lock.release_write()
+            self.__messages_second_buffer_lock.release_write()
 
         if ex is not None: raise ex
 
     async def __flush_partition_messages(self, partition: int) -> Tuple[int, int]:
-        if partition not in self.__partitions_buffer or len(self.__partitions_buffer[partition]) == 0: return (-1, 0)
+        if partition not in self.__messages_second_buffer or len(self.__messages_second_buffer[partition]) == 0: return (-1, 0)
 
         partition_ex: Exception | None = None
         flushed_bytes: int = 0
@@ -276,7 +282,7 @@ class Producer:
                             [
                                 (QUEUE_NAME, self.__conf.queue),
                                 (PARTITION, partition),
-                                (MESSAGES, [(message, key) for message, key, _ in self.__partitions_buffer[partition]])
+                                (MESSAGES, [(message, key) for message, key, _ in self.__messages_second_buffer[partition]])
                             ]
                         )
                     )
@@ -284,7 +290,7 @@ class Producer:
             except Exception as e:
                 partition_ex = e
             finally:
-                for message, key, cb in self.__partitions_buffer[partition]:
+                for message, key, cb in self.__messages_second_buffer[partition]:
                     flushed_bytes += 0 if partition_ex is not None else len(message)
                     if cb != None: cb(message, key, partition_ex)
 
@@ -311,7 +317,6 @@ class Producer:
         print("Producer closed")
 
     def __flush_messages_batch(self):
-        return
         while not self.__stopped:
             time.sleep(self.__conf.wait_ms / 1000)
             try:

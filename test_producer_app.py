@@ -47,13 +47,13 @@ while True:
 
     for i in range(100000):
         asyncio.run(producer.produce(message=f"{message} {i}", key=f"{key} {i}"))#, on_delivery=on_delivery_callback))
-        if i % 10000 == 0: print(i)
+        if i % 10000 == 0 and i > 0:
+            end = time.time()
+            duration = end - start
+
+            print(f"Iteration: {i}, Duration: {duration:.3f} seconds")
+            start = time.time()
 
     break
 
 producer.close()
-
-end = time.time()
-duration = end - start
-
-print(f"Duration: {duration:.3f} seconds")
