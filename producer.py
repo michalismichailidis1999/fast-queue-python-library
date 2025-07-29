@@ -1,4 +1,4 @@
-from typing import Callable, Dict
+from typing import Callable, Dict, Generator
 from broker_client import *
 from constants import *
 from responses import GetQueuePartitionInfoResponse, ProduceMessagesResponse
@@ -19,17 +19,56 @@ class ProducerConf:
     :raise ValueError: If invalid argument is passed.
     """
 
-    def __init__(self, queue: str, wait_ms: int = None, max_batch_size: int = 16384) -> None:
+    def __init__(self, queue: str, wait_ms: int = None, max_batch_size: int = 16384, max_produce_request_bytes: int = 1_000_000) -> None:
         if wait_ms is not None and wait_ms < 0:
             raise ValueError("wait_ms cannot be less than 0")
         
         if max_batch_size is not None and max_batch_size < 0:
             raise ValueError("max_batch_size cannot be less than 0")
         
+        if max_produce_request_bytes  < 0:
+            raise ValueError("max_produce_request_bytes cannot be less than 0")
+        
         self.queue: str = queue
    
         self.max_batch_size: int = max_batch_size # default 16KB
         self.wait_ms: int = 0 if wait_ms is None else wait_ms
+        self.max_produce_request_bytes = max_produce_request_bytes
+
+class PartitionMessagesDoubleBuffer:
+    def __init__(self):
+        self.__messages: list[Dict[int, list[Tuple[bytes, bytes | None]]]] = [{}, {}]
+        self.__write_pos: int = 0
+        self.__read_pos: int = 1
+        self.write_lock: ReadWriteLock = ReadWriteLock()
+        self.read_lock: ReadWriteLock = ReadWriteLock()
+
+    def append_partition_message(self, partition: int, message: Tuple[bytes, bytes | None]):
+        buff = self.__messages[self.__write_pos]
+
+        if partition not in buff:
+            buff[partition] = []
+
+        buff[partition].append(message)
+
+    def read_partition_messages(self, partition: int) -> Generator[Tuple[bytes, bytes | None], None, None]:
+        if partition in self.__messages:
+            for message_key_pair in self.__messages[self.__read_pos][partition]:
+                yield message_key_pair
+
+    def clear_read_buffer(self):
+        self.__messages[self.__read_pos] = {}
+
+    def swap_buffers(self):
+        self.write_lock.acquire_write()
+        self.read_lock.acquire_write()
+
+        temp = self.__read_pos
+        self.__read_pos = self.__write_pos
+        self.__write_pos = temp
+
+        self.read_lock.release_write()
+        self.write_lock.release_write()
 
 class Producer:
 
@@ -41,26 +80,16 @@ class Producer:
 
         self.__on_message_delivery_callback: Callable[[bytes, bytes | None, Exception], None] = on_delivery_callabck
 
-        self.__messages_first_buffer: Dict[
-            int, list[Tuple[bytes, bytes | None, Callable[[bytes, bytes | None, Exception], None]]]
-        ] = {}
-
-        self.__messages_second_buffer: Dict[
-            int, list[Tuple[bytes, bytes | None, Callable[[bytes, bytes | None, Exception], None]]]
-        ] = {}
+        self.__messages: PartitionMessagesDoubleBuffer = PartitionMessagesDoubleBuffer()
 
         self.__total_bytes_cached = 0
-
-        self.__messages_first_buffer_lock: ReadWriteLock = ReadWriteLock()
-        self.__messages_second_buffer_lock: ReadWriteLock = ReadWriteLock()
-        
         self.__cached_bytes_lock: ReadWriteLock = ReadWriteLock()
-        self.__partitions_lock: ReadWriteLock = ReadWriteLock()
 
         self.__send_messages_in_batches: bool = self.__conf.wait_ms > 0
         self.__prev_partition_sent: int = -1
         self.__seed = random.randint(100, 1000)
 
+        self.__partitions_lock: ReadWriteLock = ReadWriteLock()
         self.__total_partitions = 0
         self.__partitions_clients: Dict[int, SocketClient | None] = {} # (Node Id - SocketClient) Pair
         self.__partitions_nodes: Dict[int, int] = {} # (Partition Id - Node Id) Pair
@@ -163,42 +192,28 @@ class Producer:
         self,
         message: str,
         key: str = None,
-        on_delivery: Callable[[bytes, bytes | None, Exception], None] = None,
     ) -> None:
         if message is None or message == "":
             raise ValueError("Message was empty")
         
-        await self.__produce(message=message.encode(), key=(key.encode() if key is not None and key != "" else None), on_delivery=on_delivery)
+        await self.__produce(message=message.encode(), key=(key.encode() if key is not None and key != "" else None))
 
     async def __produce(
         self,
         message: bytes,
-        key: bytes | None, 
-        on_delivery: Callable[[bytes, bytes | None, Exception], None] = None,
+        key: bytes | None,
     ) -> None:
         if message == None or len(message) == 0:
             raise ValueError("Message was empty")
+        
+        partition: int = self.__get_message_partition(key)
+        self.__prev_partition_sent = partition
 
-        ex: Exception = None
+        self.__messages.write_lock.acquire_write()
+        self.__messages.append_partition_message(partition=partition, message=(message, key))
+        self.__messages.write_lock.release_write()
 
-        self.__messages_first_buffer_lock.acquire_write()
-
-        try:
-            partition: int = self.__get_message_partition(key)
-
-            if partition not in self.__messages_first_buffer:
-                self.__messages_first_buffer[partition] = []
-
-            self.__messages_first_buffer[partition].append((message, key, on_delivery))
-            self.__increment_cached_bytes(len(message))
-            self.__prev_partition_sent = partition
-        except Exception as e:
-            ex = e
-        finally:
-            self.__messages_first_buffer_lock.release_write()
-
-        if ex != None:
-            raise ex
+        self.__increment_cached_bytes(len(message))
 
         if (
             self.__conf.max_batch_size <= self.__total_bytes_cached
@@ -208,35 +223,13 @@ class Producer:
     async def flush(self):
         ex: Exception = None
 
-        self.__messages_second_buffer_lock.acquire_write()
-        self.__messages_first_buffer_lock.acquire_write()
+        self.__init_cached_bytes()
+
+        self.__messages.swap_buffers()
+
+        self.__messages.read_lock.acquire_write()
 
         try:
-            for partition in range(self.__total_partitions):
-                if partition not in self.__messages_first_buffer: continue
-
-                if partition not in self.__messages_second_buffer:
-                    self.__messages_second_buffer[partition] = self.__messages_first_buffer[partition]
-                else: 
-                    diff = abs(1000 - len(self.__messages_second_buffer[partition]))
-                    self.__messages_second_buffer[partition] += self.__messages_first_buffer[partition][:diff]
-
-                    if diff > len(self.__messages_first_buffer[partition]):
-                        del self.__messages_first_buffer[partition]
-                    else:
-                        self.__messages_first_buffer[partition] = self.__messages_first_buffer[partition][diff:]
-        except Exception as e:
-            ex = e
-        finally:
-            self.__messages_first_buffer_lock.release_write()
-
-        if ex is not None:
-            self.__messages_second_buffer_lock.release_write()
-            raise ex
-
-        try:
-            partitions_to_remove = []
-
             tasks = [
                 self.__flush_partition_messages(partition=partition)
                 for partition in range(self.__total_partitions)
@@ -247,60 +240,73 @@ class Producer:
             for result in results:
                 if isinstance(result, Exception):
                     print(f"Error occured while flushing partition messages. {result}")
-                else:
-                    partitions_to_remove.append(result[0])
-                    self.__increment_cached_bytes(-result[1])
-
-            for partition in partitions_to_remove:
-                if partition in self.__partitions_buffer: 
-                    del self.__partitions_buffer[partition]
                     
+            self.__messages.clear_read_buffer()
+
         except Exception as e:
             ex = e
         finally:
-            self.__messages_second_buffer_lock.release_write()
+            self.__messages.read_lock.release_write()
 
         if ex is not None: raise ex
 
-    async def __flush_partition_messages(self, partition: int) -> Tuple[int, int]:
-        if partition not in self.__messages_second_buffer or len(self.__messages_second_buffer[partition]) == 0: return (-1, 0)
-
-        partition_ex: Exception | None = None
-        flushed_bytes: int = 0
-
+    async def __flush_partition_messages(self, partition: int):
         try:
             partition_client = self.__get_leader_node_socket_client(partition_id=partition)
 
             if partition_client == None:
                 raise Exception(f"No leader node for partition {partition} elected yet")
             
-            try:
-                res = ProduceMessagesResponse(
-                    partition_client.send_request(
-                        self.__client._create_request(
-                            PRODUCE,
-                            [
-                                (QUEUE_NAME, self.__conf.queue),
-                                (PARTITION, partition),
-                                (MESSAGES, [(message, key) for message, key, _ in self.__messages_second_buffer[partition]])
-                            ]
-                        )
-                    )
-                )
-            except Exception as e:
-                partition_ex = e
-            finally:
-                for message, key, cb in self.__messages_second_buffer[partition]:
-                    flushed_bytes += 0 if partition_ex is not None else len(message)
-                    if cb != None: cb(message, key, partition_ex)
+            remaining_bytes: int = self.__conf.max_produce_request_bytes
 
-                if partition_ex is None:
-                    print(f"Flushed {flushed_bytes} bytes from partition {partition}")
-                    return (partition, flushed_bytes)
-                
-                return (-1, 0)
+            to_send = []
+
+            for message, key in self.__messages.read_partition_messages(partition=partition):
+                if remaining_bytes - len(message) - len(key) < 0:
+                    self.__send_messages_to_partition_leader(
+                        partition_client=partition_client, 
+                        partition=partition, 
+                        messages=to_send,
+                    )
+                    
+                    remaining_bytes: int = self.__conf.max_produce_request_bytes
+                    to_send.clear()
+                else: 
+                    to_send.append((message, key))
+
+            if len(to_send) > 0:
+                self.__send_messages_to_partition_leader(
+                    partition_client=partition_client, 
+                    partition=partition, 
+                    messages=to_send,
+                )
+
+                to_send.clear()
         except Exception as e:
             raise e
+        
+    def __send_messages_to_partition_leader(self, partition_client: SocketClient, partition: int, messages: list[Tuple[bytes, bytes | None]]):
+        partition_ex: Exception | None = None
+
+        try:
+            ProduceMessagesResponse(
+                partition_client.send_request(
+                    self.__client._create_request(
+                        PRODUCE,
+                        [
+                            (QUEUE_NAME, self.__conf.queue),
+                            (PARTITION, partition),
+                            (MESSAGES, messages)
+                        ]
+                    )
+                )
+            )
+        except Exception as e:
+            partition_ex = e
+        
+        if self.__on_message_delivery_callback != None:
+            for message, key in messages:
+                self.__on_message_delivery_callback(message, key, partition_ex)
 
     def close(self):
         self.__stopped = True
@@ -326,24 +332,14 @@ class Producer:
 
     def __get_message_partition(self, key: bytes = None) -> int:
         if key == None:
-            ex: Exception = None
-
             self.__partitions_lock.acquire_read()
 
             partition: int = self.__prev_partition_sent
 
-            try:
-                if partition == -1:
-                    partition = 0
-                else:
-                    partition = (partition + 1) % self.__total_partitions
-            except Exception as e:
-                ex = e
-            finally:
-                self.__partitions_lock.release_read()
+            if partition == -1: partition = 0
+            else: partition = (partition + 1) % self.__total_partitions
 
-            if ex != None:
-                raise ex
+            self.__partitions_lock.release_read()
 
             return partition
         else:
@@ -414,6 +410,13 @@ class Producer:
 
         self.__cached_bytes_lock.release_write()
 
+    def __init_cached_bytes(self) -> None:
+        self.__partitions_lock.acquire_write()
+
+        self.__total_bytes_cached = 0
+
+        self.__partitions_lock.release_write()
+
     def __set_partition_node(self, partition_id: int, node_id: int, if_not_exists_only: bool = False) -> None:
         self.__partitions_lock.acquire_write()
 
@@ -425,7 +428,7 @@ class Producer:
     def __set_total_partitions(self, total_partitions: int) -> None:
         self.__partitions_lock.acquire_write()
 
-        self.__total_partitions = total_partitions
+        if self.__total_partitions == 0: self.__total_partitions = total_partitions
 
         self.__partitions_lock.release_write()
 
