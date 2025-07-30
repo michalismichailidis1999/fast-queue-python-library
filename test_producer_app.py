@@ -28,7 +28,7 @@ queue_name = input("Enter the queue you want to produce messages to: ")
 
 client.create_queue(queue=queue_name, partitions=3, replication_factor=1)
 
-producer_conf = ProducerConf(queue=queue_name, wait_ms=3000, max_batch_size=163840)
+producer_conf = ProducerConf(queue=queue_name, wait_ms=15000, max_batch_size=1638400)
 
 producer = Producer(client=client, conf=producer_conf)
 

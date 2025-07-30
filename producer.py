@@ -19,7 +19,7 @@ class ProducerConf:
     :raise ValueError: If invalid argument is passed.
     """
 
-    def __init__(self, queue: str, wait_ms: int = None, max_batch_size: int = 16384, max_produce_request_bytes: int = 1_000_000) -> None:
+    def __init__(self, queue: str, wait_ms: int = None, max_batch_size: int = 16384, max_produce_request_bytes: int = 10_000_000) -> None:
         if wait_ms is not None and wait_ms < 0:
             raise ValueError("wait_ms cannot be less than 0")
         
@@ -52,7 +52,7 @@ class PartitionMessagesDoubleBuffer:
         buff[partition].append(message)
 
     def read_partition_messages(self, partition: int) -> Generator[Tuple[bytes, bytes | None], None, None]:
-        if partition in self.__messages:
+        if partition in self.__messages[self.__read_pos]:
             for message_key_pair in self.__messages[self.__read_pos][partition]:
                 yield message_key_pair
 
@@ -81,6 +81,7 @@ class Producer:
         self.__on_message_delivery_callback: Callable[[bytes, bytes | None, Exception], None] = on_delivery_callabck
 
         self.__messages: PartitionMessagesDoubleBuffer = PartitionMessagesDoubleBuffer()
+        self.__produce_lock: ReadWriteLock = ReadWriteLock()
 
         self.__total_bytes_cached = 0
         self.__cached_bytes_lock: ReadWriteLock = ReadWriteLock()
@@ -93,6 +94,9 @@ class Producer:
         self.__total_partitions = 0
         self.__partitions_clients: Dict[int, SocketClient | None] = {} # (Node Id - SocketClient) Pair
         self.__partitions_nodes: Dict[int, int] = {} # (Partition Id - Node Id) Pair
+
+        self.__can_flush: bool = True
+        self.__flush_lock: ReadWriteLock = ReadWriteLock()
 
         self.__stopped: bool = False
 
@@ -196,7 +200,20 @@ class Producer:
         if message is None or message == "":
             raise ValueError("Message was empty")
         
-        await self.__produce(message=message.encode(), key=(key.encode() if key is not None and key != "" else None))
+        if not self.__send_messages_in_batches:
+            self.__produce_lock.acquire_write()
+
+        ex: Exception | None = None
+
+        try:
+            await self.__produce(message=message.encode(), key=(key.encode() if key is not None and key != "" else None))
+        except Exception as e:
+            ex = e
+        finally:
+            if not self.__send_messages_in_batches:
+                self.__produce_lock.release_write()
+
+        if ex is not None: raise ex
 
     async def __produce(
         self,
@@ -213,14 +230,22 @@ class Producer:
         self.__messages.append_partition_message(partition=partition, message=(message, key))
         self.__messages.write_lock.release_write()
 
-        self.__increment_cached_bytes(len(message))
+        total_cached_bytes = self.__increment_cached_bytes(len(message))
 
-        if (
-            self.__conf.max_batch_size <= self.__total_bytes_cached
-            or not self.__send_messages_in_batches
-        ): await self.flush()
+        if self.__conf.max_batch_size <= total_cached_bytes or not self.__send_messages_in_batches:
+            await self.flush()
 
     async def flush(self):
+        self.__flush_lock.acquire_write()
+
+        if not self.__can_flush:
+            self.__flush_lock.release_write()
+            return
+        
+        self.__can_flush = False
+
+        self.__flush_lock.release_write()
+
         ex: Exception = None
 
         self.__init_cached_bytes()
@@ -248,6 +273,12 @@ class Producer:
         finally:
             self.__messages.read_lock.release_write()
 
+        self.__flush_lock.acquire_write()
+
+        self.__can_flush = True
+
+        self.__flush_lock.release_write()
+
         if ex is not None: raise ex
 
     async def __flush_partition_messages(self, partition: int):
@@ -273,6 +304,7 @@ class Producer:
                     to_send.clear()
                 else: 
                     to_send.append((message, key))
+                    remaining_bytes -= (len(message) + len(key))
 
             if len(to_send) > 0:
                 self.__send_messages_to_partition_leader(
@@ -331,15 +363,13 @@ class Producer:
                 print(f"Error occured while flushing messages periodically. {e}")
 
     def __get_message_partition(self, key: bytes = None) -> int:
+        if self.__total_partitions == 0: return -1
+        
         if key == None:
-            self.__partitions_lock.acquire_read()
-
             partition: int = self.__prev_partition_sent
 
             if partition == -1: partition = 0
             else: partition = (partition + 1) % self.__total_partitions
-
-            self.__partitions_lock.release_read()
 
             return partition
         else:
@@ -403,12 +433,15 @@ class Producer:
 
         return socket_client
 
-    def __increment_cached_bytes(self, inc: int) -> None:
+    def __increment_cached_bytes(self, inc: int) -> int:
         self.__cached_bytes_lock.acquire_write()
 
         self.__total_bytes_cached += inc
+        total_cached_bytes = self.__total_bytes_cached
 
         self.__cached_bytes_lock.release_write()
+
+        return total_cached_bytes
 
     def __init_cached_bytes(self) -> None:
         self.__partitions_lock.acquire_write()
