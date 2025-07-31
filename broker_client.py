@@ -9,41 +9,7 @@ from responses import (
 import time
 import threading
 from lock import ReadWriteLock
-
-class BrokerClientConf(SocketClientConf):
-
-    def __init__(
-        self,
-        timeoutms: int = 0,
-        retries: int = 1,
-        retry_wait_ms: int = 0,
-        ssl_enable: bool = False,
-        root_cert: str = None,
-        cert: str = None,
-        cert_key: str = None,
-        cert_pass: str = None,
-        authentication_enable: bool = False,
-        username: str = None,
-        password: str = None,
-        max_pool_connections: int = 10
-    ) -> None:
-        super().__init__(
-            timeoutms=timeoutms,
-            retries=retries,
-            retry_wait_ms=retry_wait_ms,
-            ssl_enable=ssl_enable,
-            root_cert=root_cert,
-            cert=cert,
-            cert_key=cert_key,
-            cert_pass=cert_pass,
-            max_pool_connections=max_pool_connections
-        )
-
-        self._authentication_enable: bool = authentication_enable
-        self._username: str = username
-        self._password: str = password
-        self._create_queue_command_run: bool = False
-
+from conf import BrokerClientConf
 
 class BrokerClient:
 

@@ -7,42 +7,7 @@ from typing import Tuple
 from constants import *
 from exceptions import RetryableException, FastQueueException
 from lock import ReadWriteLock
-
-class SocketClientConf:
-
-    def __init__(
-        self,
-        timeoutms: int = 0,
-        retries: int = 1,
-        retry_wait_ms: int = 0,
-        ssl_enable: bool = False,
-        root_cert: str = None,
-        cert: str = None,
-        cert_key: str = None,
-        cert_pass: str = None,
-        max_pool_connections: int = 10
-    ) -> None:
-        if timeoutms < 0:
-            raise ValueError("timeoutms cannot be less than 0")
-        
-        if retries < 1:
-            raise ValueError("retries cannot be less than 1")
-        
-        if retry_wait_ms < 0:
-            raise ValueError("retry_wait_ms cannot be less than 0")
-        
-        if max_pool_connections < 1:
-            raise ValueError("max_pool_connections cannot be less than 1")
-        
-        self._timeoutms = timeoutms
-        self._retries: int = retries
-        self._retry_wait_ms: int = retry_wait_ms
-        self._ssl_enable: bool = ssl_enable
-        self._root_cert: str = root_cert
-        self._cert: str = cert
-        self._cert_key: str = cert_key
-        self._cert_pass: str = cert_pass
-        self._max_pool_connections: int = max_pool_connections
+from conf import SocketClientConf
 
 class SocketConnection:
 
