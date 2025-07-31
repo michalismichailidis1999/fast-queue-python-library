@@ -95,6 +95,14 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
                 field_values[key_to_use] = [node]
             else:
                 field_values[key_to_use].append(node)
+        elif res_key == CONSUMER_ID:
+            field_values["consumer_id"] = int.from_bytes(
+                bytes=res_bytes[offset : (offset + INT_SIZE)],
+                byteorder=ENDIAS,
+                signed=False,
+            )
+
+            offset += INT_SIZE
 
     return field_values
 
@@ -189,3 +197,10 @@ class ProduceMessagesResponse:
         res_fields = _response_fields_mapper(res_bytes, set([OK]))
 
         self.success: bool = res_fields["success"]
+
+class RegisterConsumerResponse:
+    def __init__(self, res_bytes: bytes):
+        res_fields = _response_fields_mapper(res_bytes, set([OK]))
+
+        self.success: bool = res_fields["success"]
+        self.consumer_id: int = res_fields["consumer_id"]

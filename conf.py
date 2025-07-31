@@ -1,3 +1,5 @@
+import uuid
+
 class SocketClientConf:
 
     def __init__(
@@ -105,8 +107,11 @@ class ConsumerConf(CommonConf):
     :raise ValueError: If invalid argument is passed.
     """
 
-    def __init__(self, queue: str):
+    def __init__(self, queue: str, group_id: str | None = None):
         if queue is None or queue is "":
             raise ValueError("queue cannot be empty")
         
         super().__init__(queue)
+
+        if group_id is None or group_id == "":
+            group_id = str(uuid.uuid4())
