@@ -68,7 +68,11 @@ class BrokerClientConf(SocketClientConf):
         self._password: str = password
         self._create_queue_command_run: bool = False
 
-class ProducerConf:
+class CommonConf:
+    def __init__(self, queue: str):
+        self.queue:str = queue
+
+class ProducerConf(CommonConf):
     """
     :param str queue: Name of the queue in which the producer will produce messages to.
     :param int wait_ms: Milliseconds to wait before sending the messages batch.
@@ -77,6 +81,9 @@ class ProducerConf:
     """
 
     def __init__(self, queue: str, wait_ms: int = None, max_batch_size: int = 16384, max_produce_request_bytes: int = 10_000_000) -> None:
+        if queue is None or queue is "":
+            raise ValueError("queue cannot be empty")
+
         if wait_ms is not None and wait_ms < 0:
             raise ValueError("wait_ms cannot be less than 0")
         
@@ -86,8 +93,20 @@ class ProducerConf:
         if max_produce_request_bytes  < 0:
             raise ValueError("max_produce_request_bytes cannot be less than 0")
         
-        self.queue: str = queue
-   
+        super().__init__(queue)
+        
         self.max_batch_size: int = max_batch_size # default 16KB
         self.wait_ms: int = 0 if wait_ms is None else wait_ms
         self.max_produce_request_bytes = max_produce_request_bytes
+
+class ConsumerConf(CommonConf):
+    """
+    :param str queue: Name of the queue in which the producer will produce messages to.
+    :raise ValueError: If invalid argument is passed.
+    """
+
+    def __init__(self, queue: str):
+        if queue is None or queue is "":
+            raise ValueError("queue cannot be empty")
+        
+        super().__init__(queue)

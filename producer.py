@@ -49,39 +49,37 @@ class PartitionMessagesDoubleBuffer:
 
 class Producer(QueuePartitionsHandler):
 
-    def __init__(self, client: BrokerClient, conf: ProducerConf, on_delivery_callabck: Callable[[bytes, bytes | None, Exception], None] = None) -> None:
+    def __init__(self, client: BrokerClient, conf: ProducerConf, on_delivery_callback: Callable[[bytes, bytes | None, Exception], None] = None) -> None:
         if client._create_queue_command_run: time.sleep(5)
 
-        super().__init__(client=client, conf=conf)
+        super().__init__(client=client, producer_conf=conf)
 
-        self.__on_message_delivery_callback: Callable[[bytes, bytes | None, Exception], None] = on_delivery_callabck
+        self.__on_message_delivery_callback: Callable[[bytes, bytes | None, Exception], None] = on_delivery_callback
 
         self.__messages: PartitionMessagesDoubleBuffer = PartitionMessagesDoubleBuffer()
         self.__produce_lock: ReadWriteLock = ReadWriteLock()
 
-        self.__total_bytes_cached = 0
+        self.__total_bytes_cached: int = 0
         self.__cached_bytes_lock: ReadWriteLock = ReadWriteLock()
 
-        self.__send_messages_in_batches: bool = self.conf.wait_ms > 0
+        self.__send_messages_in_batches: bool = self._conf.wait_ms > 0
         self.__prev_partition_sent: int = -1
         self.__seed = random.randint(100, 1000)
 
         self.__can_flush: bool = True
         self.__flush_lock: ReadWriteLock = ReadWriteLock()
 
-        self.stopped: bool = False
+        self._retrieve_queue_partitions_info(5, True)
 
-        self.retrieve_queue_partitions_info(5, True)
-
-        t1 = threading.Thread(target=self.retrieve_queue_partitions_info, args=[1, False], daemon=True)
+        t1 = threading.Thread(target=self._retrieve_queue_partitions_info, args=[1, False], daemon=True)
         t1.start()
 
-        if self.conf.wait_ms > 0:
+        if self._conf.wait_ms > 0:
             t2 = threading.Thread(target=self.__flush_messages_batch, daemon=True)
             t2.start()
 
         print(
-            f"Producer initialized for queue {self.conf.queue}"
+            f"Producer initialized for queue {self._conf.queue}"
         )
 
     # TODO: Check function's response time
@@ -125,7 +123,7 @@ class Producer(QueuePartitionsHandler):
 
         total_cached_bytes = self.__increment_cached_bytes(len(message))
 
-        if self.conf.max_batch_size <= total_cached_bytes or not self.__send_messages_in_batches:
+        if self._conf.max_batch_size <= total_cached_bytes or not self.__send_messages_in_batches:
             await self.flush()
 
     async def flush(self):
@@ -150,7 +148,7 @@ class Producer(QueuePartitionsHandler):
         try:
             tasks = [
                 self.__flush_partition_messages(partition=partition)
-                for partition in range(self.total_partitions)
+                for partition in range(self._total_partitions)
             ]
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -176,12 +174,12 @@ class Producer(QueuePartitionsHandler):
 
     async def __flush_partition_messages(self, partition: int):
         try:
-            partition_client = self.__get_leader_node_socket_client(partition_id=partition)
+            partition_client = self._get_leader_node_socket_client(partition_id=partition)
 
             if partition_client == None:
                 raise Exception(f"No leader node for partition {partition} elected yet")
             
-            remaining_bytes: int = self.conf.max_produce_request_bytes
+            remaining_bytes: int = self._conf.max_produce_request_bytes
 
             to_send = []
 
@@ -193,7 +191,7 @@ class Producer(QueuePartitionsHandler):
                         messages=to_send,
                     )
                     
-                    remaining_bytes: int = self.conf.max_produce_request_bytes
+                    remaining_bytes: int = self._conf.max_produce_request_bytes
                     to_send.clear()
                 else: 
                     to_send.append((message, key))
@@ -216,10 +214,10 @@ class Producer(QueuePartitionsHandler):
         try:
             ProduceMessagesResponse(
                 partition_client.send_request(
-                    self.client._create_request(
+                    self._client._create_request(
                         PRODUCE,
                         [
-                            (QUEUE_NAME, self.conf.queue),
+                            (QUEUE_NAME, self._conf.queue),
                             (PARTITION, partition),
                             (MESSAGES, messages)
                         ]
@@ -234,7 +232,7 @@ class Producer(QueuePartitionsHandler):
                 self.__on_message_delivery_callback(message, key, partition_ex)
 
     def close(self):
-        self.stopped = True
+        self._stopped = True
 
         try:
             if self.__total_bytes_cached > 0:
@@ -243,41 +241,30 @@ class Producer(QueuePartitionsHandler):
         except Exception as e:
             print(f"Could not flush remaining messages. Reason: {e}")
 
-        self.client.close()
+        self._client.close()
 
         print("Producer closed")
 
     def __flush_messages_batch(self):
-        while not self.stopped:
-            time.sleep(self.conf.wait_ms / 1000)
+        while not self._stopped:
+            time.sleep(self._conf.wait_ms / 1000)
             try:
                 asyncio.run(self.flush())
             except Exception as e:
                 print(f"Error occured while flushing messages periodically. {e}")
 
     def __get_message_partition(self, key: bytes = None) -> int:
-        if self.total_partitions == 0: return -1
+        if self._total_partitions == 0: return -1
 
         if key == None:
             partition: int = self.__prev_partition_sent
 
             if partition == -1: partition = 0
-            else: partition = (partition + 1) % self.total_partitions
+            else: partition = (partition + 1) % self._total_partitions
 
             return partition
         else:
-            return mmh3.hash(key=key, seed=self.__seed) % self.total_partitions
-
-    def __get_leader_node_socket_client(self, partition_id: int) -> SocketClient | None:
-        self.partitions_lock.acquire_read()
-
-        node_id: int = self.partitions_nodes[partition_id] if partition_id in self.partitions_nodes else -1
-
-        socket_client = self.partition_clients[node_id] if node_id is not None and node_id in self.partition_clients else None
-
-        self.partitions_lock.release_read()
-
-        return socket_client
+            return mmh3.hash(key=key, seed=self.__seed) % self._total_partitions
 
     def __increment_cached_bytes(self, inc: int) -> int:
         self.__cached_bytes_lock.acquire_write()
@@ -290,11 +277,11 @@ class Producer(QueuePartitionsHandler):
         return total_cached_bytes
 
     def __init_cached_bytes(self) -> None:
-        self.partitions_lock.acquire_write()
+        self._partitions_lock.acquire_write()
 
         self.__total_bytes_cached = 0
 
-        self.partitions_lock.release_write()
+        self._partitions_lock.release_write()
 
     def __del__(self):
         self.close()
