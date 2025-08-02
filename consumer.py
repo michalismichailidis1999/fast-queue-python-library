@@ -15,26 +15,37 @@ class Consumer(QueuePartitionsHandler):
 
         self.__register_consumer()
 
-        self.retrieve_queue_partitions_info(5, True)
+        self._retrieve_queue_partitions_info(5, True)
 
-        t1 = threading.Thread(target=self.retrieve_queue_partitions_info, args=[1, False], daemon=True)
+        t1 = threading.Thread(target=self._retrieve_queue_partitions_info, args=[1, False], daemon=True)
         t1.start()
 
     def __register_consumer(self):
-        res = RegisterConsumerResponse(
-            self._client._create_request(
-                REGISTER_CONSUMER,
-                [
-                    (QUEUE_NAME, self._conf.queue),
-                    (CONSUMER_GROUP_ID, self._conf.group_id)
-                ]
-            )
-        )
+        retries: int = 3
 
-        if not res.success:
-            raise Exception("Could not register consumer")
+        while retries > 0:
+            try:
+                res = RegisterConsumerResponse(
+                    self._client._create_request(
+                        REGISTER_CONSUMER,
+                        [
+                            (QUEUE_NAME, self._conf.queue),
+                            (CONSUMER_GROUP_ID, self._conf.group_id),
+                            (CONSUME_FROM, self._conf.consume_from == CONSUME_EARLIEST)
+                        ]
+                    )
+                )
 
-        self.__id = res.consumer_id
+                if not res.success or res.consumer_id <= 0:
+                    raise Exception("Could not register consumer")
+
+                self.__id = res.consumer_id
+
+                break
+            except Exception as e:
+                retries -= 1
+
+                if retries <= 0: raise e
 
     async def consume(self, callback: Callable[[bytes, bytes], None]) -> None:
         if callback is None:

@@ -1,4 +1,5 @@
 import uuid
+from constants import *
 
 class SocketClientConf:
 
@@ -104,14 +105,35 @@ class ProducerConf(CommonConf):
 class ConsumerConf(CommonConf):
     """
     :param str queue: Name of the queue in which the producer will produce messages to.
+    :param str group_id: Group id of the consumer.
+    :param int consume_from: Where the consumer should start if consumer group is new. Possible values are [ 'latest', 'earliest' ]. If consumer group exists it will continue form where it left off.
+    :param str auto_commit: If True auto commit is enabled even though message processing might fail.
+    :param str auto_commit_interval_ms: If auto commit is enabled, after how many milliseconds the offsets should be commited.
     :raise ValueError: If invalid argument is passed.
     """
 
-    def __init__(self, queue: str, group_id: str | None = None):
+    def __init__(self, queue: str, group_id: str | None = None, consume_from:str = CONSUME_LATEST, auto_commit: bool = True, auto_commit_interval_ms: int = 3000):
         if queue is None or queue is "":
             raise ValueError("queue cannot be empty")
         
+        if consume_from is None or queue is "":
+            raise ValueError("consume_from cannot be empty")
+        
+        if consume_from != CONSUME_LATEST and consume_from != CONSUME_EARLIEST:
+            raise ValueError(f"Incorrect consume_from value '{consume_from}'")
+        
+        if auto_commit and auto_commit_interval_ms <= 0:
+            raise ValueError("")
+        
         super().__init__(queue)
 
+        self.group_id: str = ""
+
         if group_id is None or group_id == "":
-            group_id = str(uuid.uuid4())
+            self.group_id = str(uuid.uuid4())
+        else:
+            self.group_id = group_id
+
+        self.consume_from: str = consume_from
+        self.auto_commit: bool = auto_commit
+        self.auto_commit_interval_ms: int = auto_commit_interval_ms
