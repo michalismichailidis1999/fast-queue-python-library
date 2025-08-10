@@ -103,6 +103,27 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
             )
 
             offset += INT_SIZE
+        elif res_key == ASSIGNED_PARTITIONS:
+            total_partitions = int.from_bytes(
+                bytes=res_bytes[offset : (offset + INT_SIZE)],
+                byteorder=ENDIAS,
+                signed=False,
+            )
+
+            offset += INT_SIZE
+
+            assigned_partitions: list[int] = []
+
+            for i in range(total_partitions):
+                assigned_partitions.append(
+                    int.from_bytes(
+                        bytes=res_bytes[offset : (offset + INT_SIZE)],
+                        byteorder=ENDIAS,
+                        signed=False,
+                    )
+                )
+
+            field_values["assigned_partitions"] = assigned_partitions
 
     return field_values
 
@@ -204,3 +225,15 @@ class RegisterConsumerResponse:
 
         self.success: bool = res_fields["success"]
         self.consumer_id: int = res_fields["consumer_id"]
+
+class GetConsumerAssignedPartitions:
+    def __init__(self, res_bytes: bytes):
+        res_fields = _response_fields_mapper(res_bytes, set([ASSIGNED_PARTITIONS]))
+
+        self.assigned_partitions: list[int] = []
+
+        if "assigned_partitions" not in "assigned_partitions":
+            res_fields["assigned_partitions"] = []
+
+        for partition in res_fields["assigned_partitions"]:
+            self.assigned_partitions.append(partition)
