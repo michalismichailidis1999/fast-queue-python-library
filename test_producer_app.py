@@ -1,5 +1,6 @@
 from broker_client import BrokerClient, BrokerClientConf
-from producer import Producer, ProducerConf
+from producer import Producer
+from conf import ProducerConf
 from constants import *
 import time
 import asyncio
