@@ -247,6 +247,7 @@ class SocketClient:
                                 error_code=res_err_code, error_message=res_err_message
                             )
                             retries -= 1
+                            if retries > 0: time.sleep(1.5)
                             continue
 
                         self.__pool.return_connection(conn)

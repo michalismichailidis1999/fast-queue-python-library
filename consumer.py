@@ -11,6 +11,8 @@ import time
 
 class Consumer(QueuePartitionsHandler):
     def __init__(self, client: BrokerClient, conf: ConsumerConf):
+        if client._create_queue_command_run: time.sleep(10)
+
         super().__init__(client=client, consumer_conf=conf)
 
         self.__id: int = -1
@@ -48,7 +50,7 @@ class Consumer(QueuePartitionsHandler):
                             [
                                 (QUEUE_NAME, self._conf.queue),
                                 (CONSUMER_GROUP_ID, self._conf.group_id),
-                                (CONSUME_FROM, self._conf.consume_from == CONSUME_EARLIEST)
+                                (CONSUME_FROM, True if self._conf.consume_from == CONSUME_EARLIEST else False)
                             ]
                         )
                     )
@@ -66,6 +68,7 @@ class Consumer(QueuePartitionsHandler):
                 break
             except Exception as e:
                 print(f"Error occured while trying to register consumer. Reason: {e}")
+                time.sleep(3)
 
     def __retrieve_assigned_partitions(self):
         retries: int = 3
@@ -131,7 +134,7 @@ class Consumer(QueuePartitionsHandler):
                     (QUEUE_NAME, self._conf.queue),
                     (CONSUMER_GROUP_ID, self._conf.group_id),
                     (CONSUMER_ID, self.__id),
-                    (PARTITION, partition_index_to_fetch)
+                    (PARTITION, partition_index_to_fetch),
                     (MESSAGE_OFFSET, offset if offset else 0),
                     (READ_SINGLE_OFFSET_ONLY, only_one)
                 ]
@@ -157,7 +160,7 @@ class Consumer(QueuePartitionsHandler):
                     (QUEUE_NAME, self._conf.queue),
                     (CONSUMER_GROUP_ID, self._conf.group_id),
                     (CONSUMER_ID, self.__id),
-                    (PARTITION, partition)
+                    (PARTITION, partition),
                     (MESSAGE_OFFSET, offset)
                 ]
             )

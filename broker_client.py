@@ -339,14 +339,19 @@ class BrokerClient:
             self.__lock.release_write()
 
     def __get_val_bytes(self, val: Any) -> int:
-        if isinstance(val, int):
+        if isinstance(val, bool):
+            return BOOL_SIZE
+        elif isinstance(val, int):
             return INT_SIZE
+        
         elif isinstance(val, str):
             return INT_SIZE + len(val)
         else: return 0
 
     def __val_to_bytes(self, val: Any) -> bytes:
-        if isinstance(val, int):
+        if isinstance(val, bool):
+            return val.to_bytes(length=BOOL_SIZE, byteorder=ENDIAS)
+        elif isinstance(val, int):
             return val.to_bytes(length=INT_SIZE, byteorder=ENDIAS)
         elif isinstance(val, str):
             return len(val).to_bytes(length=INT_SIZE, byteorder=ENDIAS) + val.encode()

@@ -50,7 +50,7 @@ class PartitionMessagesDoubleBuffer:
 class Producer(QueuePartitionsHandler):
 
     def __init__(self, client: BrokerClient, conf: ProducerConf, on_delivery_callback: Callable[[bytes, bytes | None, Exception], None] = None) -> None:
-        if client._create_queue_command_run: time.sleep(5)
+        if client._create_queue_command_run: time.sleep(10)
 
         super().__init__(client=client, producer_conf=conf)
 

@@ -97,12 +97,12 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
                 field_values[key_to_use].append(node)
         elif res_key == CONSUMER_ID:
             field_values["consumer_id"] = int.from_bytes(
-                bytes=res_bytes[offset : (offset + INT_SIZE)],
+                bytes=res_bytes[offset : (offset + LONG_LONG_SIZE)],
                 byteorder=ENDIAS,
                 signed=False,
             )
 
-            offset += INT_SIZE
+            offset += LONG_LONG_SIZE
         elif res_key == ASSIGNED_PARTITIONS:
             total_partitions = int.from_bytes(
                 bytes=res_bytes[offset : (offset + INT_SIZE)],

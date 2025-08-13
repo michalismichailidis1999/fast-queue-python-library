@@ -4,12 +4,6 @@ from consumer import Consumer
 from conf import ConsumerConf
 from constants import *
 
-def on_delivery_callback(message: bytes, key: bytes | None, exception: Exception | None):
-    if exception != None:
-        print(f"Could not produce message `{(message.decode())}`. Reason: {exception}")
-    else:
-        print(f"Message `{(message.decode())}` produced successfully")
-
 broker_conf = BrokerClientConf(
     # timeoutms=None,
     # ssl_enable=False,
@@ -24,7 +18,7 @@ broker_conf = BrokerClientConf(
 
 client = BrokerClient(conf=broker_conf, controller_node=["127.0.0.1", 9877])
 
-queue_name = input("Enter the queue you want to produce messages to: ")
+queue_name = input("Enter the queue you want to consume messages from: ")
 
 client.create_queue(queue=queue_name, partitions=3, replication_factor=1)
 
