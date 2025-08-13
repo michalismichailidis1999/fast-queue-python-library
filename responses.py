@@ -225,7 +225,7 @@ class GetControllersConnectionInfoResponse:
         self.leader_id: int = res_fields["leader_id"] if "leader_id" in res_fields else -1
         self.controller_nodes: List[ControllerConnectionInfo] = []
 
-        if "controller_nodes" not in res_fields["controller_nodes"]:
+        if "controller_nodes" not in res_fields:
             res_fields["controller_nodes"] = []
 
         for controller_info in res_fields["controller_nodes"]:
@@ -298,7 +298,7 @@ class GetConsumerAssignedPartitions:
 
         self.assigned_partitions: list[int] = []
 
-        if "assigned_partitions" not in "assigned_partitions":
+        if "assigned_partitions" not in res_fields:
             res_fields["assigned_partitions"] = []
 
         for partition in res_fields["assigned_partitions"]:
