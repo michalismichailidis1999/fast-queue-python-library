@@ -159,10 +159,11 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
 
             offset += INT_SIZE
 
+            field_values["total_messages"] = total_messages
             field_values["total_messages_bytes"] = total_messages_bytes
+            field_values["messages"] = []
 
             if total_messages == 0:
-                field_values["messages"] = []
                 continue
 
             for i in range(total_messages):
@@ -200,6 +201,8 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
 
                 message["key"] = res_bytes[(offset + MESSAGE_METADATA_END_OFFSET) : (offset + MESSAGE_METADATA_END_OFFSET + key_size)] if key_size > 0 else None
                 message["payload"] = res_bytes[(offset + MESSAGE_METADATA_END_OFFSET + key_size) : (offset + MESSAGE_METADATA_END_OFFSET + key_size + payload_size)] if payload_size > 0 else None
+
+                field_values["messages"].append(message)
 
                 offset += nessage_bytes
 
@@ -326,10 +329,10 @@ class GetConsumerAssignedPartitions:
 
 class Message:
     def __init__(self, payload: bytes, key: bytes | None, offset: int, timestamp: int):
-        self.key: bytes | None = None
-        self.payload: bytes = []
-        self.offset: int = 0
-        self.timestamp: int = 0
+        self.key: bytes | None = key
+        self.payload: bytes = payload
+        self.offset: int = offset
+        self.timestamp: int = timestamp
         self.partition: int = -1
 
 class ConsumeMessagesResponse:

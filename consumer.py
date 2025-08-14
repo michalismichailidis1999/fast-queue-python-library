@@ -40,6 +40,9 @@ class Consumer(QueuePartitionsHandler):
         t2.start()
 
     def __register_consumer(self):
+        # self.__id = 1
+        # return
+    
         while True:
             try:
                 leader_node = self._client._get_leader_node_socket_client()
