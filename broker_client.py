@@ -34,7 +34,7 @@ class BrokerClient:
 
         self.__stopped: bool = False
 
-        self.__fetch_info_wait_time_sec: int = 10
+        self.__fetch_info_wait_time_sec: int = 15
 
         # initialize the leader
         self.__check_for_leader_update(controller_node=controller_node, retries=5, called_from_contructor=True)
@@ -154,9 +154,9 @@ class BrokerClient:
                     self._create_request(
                         CREATE_QUEUE,
                         [
-                            (QUEUE_NAME, queue),
-                            (PARTITIONS, partitions),
-                            (REPLICATION_FACTOR, replication_factor),
+                            (QUEUE_NAME, queue, None),
+                            (PARTITIONS, partitions, None),
+                            (REPLICATION_FACTOR, replication_factor, None),
                         ],
                         True,
                     )
@@ -188,7 +188,7 @@ class BrokerClient:
                     self._create_request(
                         CREATE_QUEUE,
                         [
-                            (QUEUE_NAME, queue),
+                            (QUEUE_NAME, queue, None),
                         ],
                         True
                     )
@@ -204,7 +204,7 @@ class BrokerClient:
             print(f"Error occured while trying to delete queue {queue}. {e}")
 
     def _create_request(
-        self, req_type: int, values: list[Tuple[int, Any]] = None, request_needs_authentication: bool = False
+        self, req_type: int, values: list[Tuple[int, Any, int | None]] = None, request_needs_authentication: bool = False
     ) -> bytearray:
         total_bytes: int = 8
 
@@ -214,11 +214,11 @@ class BrokerClient:
         messages_total_bytes = 0
 
         if values != None:
-            for reqValKey, val in values:
+            for reqValKey, val, val_bytes in values:
                 total_bytes += INT_SIZE
 
                 if val != None and reqValKey != MESSAGES:
-                    total_bytes += self.__get_val_bytes(val=val)
+                    total_bytes += self.__get_val_bytes(val=val) if val_bytes is None else val_bytes
                 elif val != None and reqValKey == MESSAGES:
                     total_bytes += INT_SIZE
                     
@@ -237,14 +237,14 @@ class BrokerClient:
         val_bytes = 0
 
         if values != None:
-            for reqValKey, val in values:
+            for reqValKey, val, val_bytes_size in values:
                 req_bytes[pos:(pos + INT_SIZE)] = self.__val_to_bytes(reqValKey)
                 pos += INT_SIZE
                 
                 if val != None and reqValKey != MESSAGES:
-                    val_bytes = self.__get_val_bytes(val)
+                    val_bytes = self.__get_val_bytes(val) if val_bytes_size is None else val_bytes_size
 
-                    req_bytes[pos:(pos + val_bytes)] = self.__val_to_bytes(val)
+                    req_bytes[pos:(pos + val_bytes)] = self.__val_to_bytes(val, val_bytes_size)
                     pos += val_bytes
                 elif val != None and reqValKey == MESSAGES:
                     req_bytes[pos:(pos + INT_SIZE)] = self.__val_to_bytes(messages_total_bytes)
@@ -346,16 +346,15 @@ class BrokerClient:
             return BOOL_SIZE
         elif isinstance(val, int):
             return INT_SIZE
-        
         elif isinstance(val, str):
             return INT_SIZE + len(val)
         else: return 0
 
-    def __val_to_bytes(self, val: Any) -> bytes:
+    def __val_to_bytes(self, val: Any, length: int | None = None) -> bytes:
         if isinstance(val, bool):
             return val.to_bytes(length=BOOL_SIZE, byteorder=ENDIAS)
         elif isinstance(val, int):
-            return val.to_bytes(length=INT_SIZE, byteorder=ENDIAS)
+            return val.to_bytes(length=(INT_SIZE if length is None else length), byteorder=ENDIAS)
         elif isinstance(val, str):
             return len(val).to_bytes(length=INT_SIZE, byteorder=ENDIAS) + val.encode()
         else:

@@ -215,9 +215,9 @@ class Producer(QueuePartitionsHandler):
                     self._client._create_request(
                         PRODUCE,
                         [
-                            (QUEUE_NAME, self._conf.queue),
-                            (PARTITION, partition),
-                            (MESSAGES, messages)
+                            (QUEUE_NAME, self._conf.queue, None),
+                            (PARTITION, partition, None),
+                            (MESSAGES, messages, None)
                         ]
                     )
                 )

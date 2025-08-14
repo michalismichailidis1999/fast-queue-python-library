@@ -9,6 +9,8 @@ from responses import ConsumeMessagesResponse, GetConsumerAssignedPartitions, Me
 from constants import *
 import time
 
+from socket_client import SocketClient
+
 class Consumer(QueuePartitionsHandler):
     def __init__(self, client: BrokerClient, conf: ConsumerConf):
         super().__init__(client=client, consumer_conf=conf)
@@ -46,9 +48,9 @@ class Consumer(QueuePartitionsHandler):
                         self._client._create_request(
                             REGISTER_CONSUMER,
                             [
-                                (QUEUE_NAME, self._conf.queue),
-                                (CONSUMER_GROUP_ID, self._conf.group_id),
-                                (CONSUME_FROM, True if self._conf.consume_from == CONSUME_EARLIEST else False)
+                                (QUEUE_NAME, self._conf.queue, None),
+                                (CONSUMER_GROUP_ID, self._conf.group_id, None),
+                                (CONSUME_FROM, True if self._conf.consume_from == CONSUME_EARLIEST else False, None)
                             ]
                         )
                     )
@@ -85,9 +87,9 @@ class Consumer(QueuePartitionsHandler):
                                 self._client._create_request(
                                     GET_CONSUMER_ASSIGNED_PARTITIONS,
                                     [
-                                        (QUEUE_NAME, self._conf.queue),
-                                        (CONSUMER_GROUP_ID, self._conf.group_id),
-                                        (CONSUMER_ID, self.__id)
+                                        (QUEUE_NAME, self._conf.queue, None),
+                                        (CONSUMER_GROUP_ID, self._conf.group_id, None),
+                                        (CONSUMER_ID, self.__id, LONG_LONG_SIZE)
                                     ]
                                 )
                             )
@@ -99,13 +101,20 @@ class Consumer(QueuePartitionsHandler):
 
                         self.__lock.release_write()
 
-                        if len(res.assigned_partitions):
+                        if len(res.assigned_partitions) == 0:
                             print("No assigned partitions yet")
-                            time.sleep(2)
+                            time.sleep(3)
+                            continue
+
+                        break
                     except Exception as e:
                         retries -= 1
 
+                        time.sleep(3)
+
                         if retries <= 0: raise e
+
+                time.sleep(15)
             except Exception as e:
                 print(f"Error occured while trying to retrieve assigned consumer partitions. Reason: {e}")
 
@@ -118,54 +127,80 @@ class Consumer(QueuePartitionsHandler):
         return self.__poll_messages(offset=offset)
 
     def __poll_messages(self, offset: int | None = None, only_one: bool = False) -> List[Message] | None:
-        partition_index_to_fetch: int = self.__get_partition_to_poll_from()
+        partition_index_to_fetch: int = -1
+        partition_client: SocketClient | None = None
 
-        partition_client = self._get_leader_node_socket_client(partition_id=partition_index_to_fetch)
+        total_assigned_partitions: int = self.__get_total_assigned_partitions()
 
-        if partition_client is None:
-            raise Exception("No leader has been elected for partition yet")
+        for i in range(total_assigned_partitions):
+            partition_index_to_fetch = self.__get_partition_to_poll_from()
+
+            if partition_index_to_fetch == -1: return None
+
+            partition_client = self._get_leader_node_socket_client(partition_id=partition_index_to_fetch)
+
+            if partition_client is not None: break
+
+        if partition_client is None: return None
         
         messages = ConsumeMessagesResponse(partition_client.send_request(
             self._client._create_request(
                 CONSUME,
                 [
-                    (QUEUE_NAME, self._conf.queue),
-                    (CONSUMER_GROUP_ID, self._conf.group_id),
-                    (CONSUMER_ID, self.__id),
-                    (PARTITION, partition_index_to_fetch),
-                    (MESSAGE_OFFSET, offset if offset else 0),
-                    (READ_SINGLE_OFFSET_ONLY, only_one)
+                    (QUEUE_NAME, self._conf.queue, None),
+                    (CONSUMER_GROUP_ID, self._conf.group_id, None),
+                    (CONSUMER_ID, self.__id, LONG_LONG_SIZE),
+                    (PARTITION, partition_index_to_fetch, None),
+                    (MESSAGE_OFFSET, offset if offset else 0, LONG_LONG_SIZE),
+                    (READ_SINGLE_OFFSET_ONLY, only_one, None)
                 ]
             )
         )).messages
 
         if messages:
+            if self._conf.auto_commit: self.__auto_commit_lock.acquire_write()
+
             for message in messages:
                 message.partition = partition_index_to_fetch
+                if self._conf.auto_commit:
+                    self.__auto_commits[message.partition] = message.offset
+
+            if self._conf.auto_commit: self.__auto_commit_lock.release_write()
 
         return messages
         
-    async def ack(self, offset: int, partition: int) -> None:
+    def ack(self, offset: int, partition: int) -> None:
         partition_client = self._get_leader_node_socket_client(partition_id=partition)
 
         if partition_client is None:
-            raise Exception("No leader has been elected for partition yet")
+            raise Exception("Could not commit message offset, no leader has been elected for partition yet")
         
         partition_client.send_request(
             self._client._create_request(
                 ACK,
                 [
-                    (QUEUE_NAME, self._conf.queue),
-                    (CONSUMER_GROUP_ID, self._conf.group_id),
-                    (CONSUMER_ID, self.__id),
-                    (PARTITION, partition),
-                    (MESSAGE_OFFSET, offset)
+                    (QUEUE_NAME, self._conf.queue, None),
+                    (CONSUMER_GROUP_ID, self._conf.group_id, None),
+                    (CONSUMER_ID, self.__id, LONG_LONG_SIZE),
+                    (PARTITION, partition, None),
+                    (MESSAGE_OFFSET, offset, LONG_LONG_SIZE)
                 ]
             )
         )
 
+    def __get_total_assigned_partitions(self):
+        self.__lock.acquire_write()
+
+        total_assigned_partitions: int = len(self.__assigned_partitions)
+
+        self.__lock.release_write()
+
+        return total_assigned_partitions
+
     def __get_partition_to_poll_from(self) -> int:
         self.__lock.acquire_write()
+
+        if len(self.__assigned_partitions) == 0: return -1
 
         partition_index_to_fetch: int = self.__last_consumed_partition_index + 1
 
@@ -175,6 +210,8 @@ class Consumer(QueuePartitionsHandler):
         self.__last_consumed_partition_index = partition_index_to_fetch
 
         self.__lock.release_write()
+
+        return partition_index_to_fetch
 
     def __auto_commit(self):
         while not self._stopped:

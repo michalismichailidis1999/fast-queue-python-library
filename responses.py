@@ -21,7 +21,7 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
 
         offset += INT_SIZE
 
-        if res_key == OK:
+        if res_key == RES_VAL_OK:
             field_values["success"] = bool.from_bytes(
                 bytes=res_bytes[offset : (offset + BOOL_SIZE)],
                 byteorder=ENDIAS,
@@ -29,7 +29,7 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
             )
 
             offset += BOOL_SIZE
-        elif res_key == QUEUE_CREATED:
+        elif res_key == RES_VAL_QUEUE_CREATED:
             field_values["created"] = bool.from_bytes(
                 bytes=res_bytes[offset : (offset + BOOL_SIZE)],
                 byteorder=ENDIAS,
@@ -37,7 +37,7 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
             )
 
             offset += BOOL_SIZE
-        elif res_key == QUEUE_DELETED:
+        elif res_key == RES_VAL_QUEUE_DELETED:
             field_values["deleted"] = bool.from_bytes(
                 bytes=res_bytes[offset : (offset + BOOL_SIZE)],
                 byteorder=ENDIAS,
@@ -45,7 +45,7 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
             )
 
             offset += BOOL_SIZE
-        elif res_key == LEADER_ID:
+        elif res_key == RES_VAL_LEADER_ID:
             field_values["leader_id"] = int.from_bytes(
                 bytes=res_bytes[offset : (offset + INT_SIZE)],
                 byteorder=ENDIAS,
@@ -53,7 +53,7 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
             )
 
             offset += INT_SIZE
-        elif res_key == TOTAL_PARTITIONS:
+        elif res_key == RES_VAL_TOTAL_PARTITIONS:
             field_values["total_partitions"] = int.from_bytes(
                 bytes=res_bytes[offset : (offset + INT_SIZE)],
                 byteorder=ENDIAS,
@@ -61,12 +61,12 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
             )
 
             offset += INT_SIZE
-        elif res_key == CONTROLLER_CONNECTION_INFO or res_key == PARTITION_NODE_CONNECTION_INFO:
+        elif res_key == RES_VAL_CONTROLLER_CONNECTION_INFO or res_key == RES_VAL_PARTITION_NODE_CONNECTION_INFO:
             node = {}
 
             key_to_use = "controller_nodes"
 
-            if res_key == PARTITION_NODE_CONNECTION_INFO:
+            if res_key == RES_VAL_PARTITION_NODE_CONNECTION_INFO:
                 node["partition_id"] = int.from_bytes(
                     bytes=res_bytes[offset : (offset + INT_SIZE)],
                     byteorder=ENDIAS,
@@ -111,7 +111,7 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
                 field_values[key_to_use] = [node]
             else:
                 field_values[key_to_use].append(node)
-        elif res_key == CONSUMER_ID:
+        elif res_key == RES_VAL_CONSUMER_ID:
             field_values["consumer_id"] = int.from_bytes(
                 bytes=res_bytes[offset : (offset + LONG_LONG_SIZE)],
                 byteorder=ENDIAS,
@@ -119,7 +119,7 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
             )
 
             offset += LONG_LONG_SIZE
-        elif res_key == ASSIGNED_PARTITIONS:
+        elif res_key == RES_VAL_ASSIGNED_PARTITIONS:
             total_partitions = int.from_bytes(
                 bytes=res_bytes[offset : (offset + INT_SIZE)],
                 byteorder=ENDIAS,
@@ -139,8 +139,10 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
                     )
                 )
 
+                offset += INT_SIZE
+
             field_values["assigned_partitions"] = assigned_partitions
-        elif res_key == MESSAGES:
+        elif res_key == RES_VAL_MESSAGES:
             total_messages = int.from_bytes(
                 bytes=res_bytes[offset : (offset + INT_SIZE)],
                 byteorder=ENDIAS,
@@ -235,7 +237,7 @@ class PartitionLeaderConnectionInfo:
 class GetControllersConnectionInfoResponse:
     def __init__(self, res_bytes: bytes):
         res_fields = _response_fields_mapper(
-            res_bytes, set([LEADER_ID, CONTROLLER_CONNECTION_INFO])
+            res_bytes, set([RES_VAL_LEADER_ID, RES_VAL_CONTROLLER_CONNECTION_INFO])
         )
 
         self.leader_id: int = res_fields["leader_id"] if "leader_id" in res_fields else -1
@@ -256,21 +258,21 @@ class GetControllersConnectionInfoResponse:
 
 class GetLeaderControllerIdResponse:
     def __init__(self, res_bytes: bytes):
-        res_fields = _response_fields_mapper(res_bytes, set([LEADER_ID]))
+        res_fields = _response_fields_mapper(res_bytes, set([RES_VAL_LEADER_ID]))
 
         self.leader_id: int = res_fields["leader_id"] if "leader_id" in res_fields else -1
 
 
 class CreateQueueResponse:
     def __init__(self, res_bytes: bytes):
-        res_fields = _response_fields_mapper(res_bytes, set([OK, QUEUE_CREATED]))
+        res_fields = _response_fields_mapper(res_bytes, set([RES_VAL_OK, RES_VAL_QUEUE_CREATED]))
 
         self.success: bool = res_fields["success"] if "success" in res_fields else False
         self.created: bool = res_fields["created"] if "created" in res_fields else False
 
 class DeleteQueueResponse:
     def __init__(self, res_bytes: bytes):
-        res_fields = _response_fields_mapper(res_bytes, set([OK, QUEUE_DELETED]))
+        res_fields = _response_fields_mapper(res_bytes, set([RES_VAL_OK, RES_VAL_QUEUE_DELETED]))
 
         self.success: bool = res_fields["success"] if "success" in res_fields else False
         self.deleted: bool = res_fields["deleted"] if "deleted" in res_fields else False
@@ -278,7 +280,7 @@ class DeleteQueueResponse:
 class GetQueuePartitionInfoResponse:
     def __init__(self, res_bytes: bytes):
         res_fields = _response_fields_mapper(
-            res_bytes, set([TOTAL_PARTITIONS, PARTITION_NODE_CONNECTION_INFO])
+            res_bytes, set([RES_VAL_TOTAL_PARTITIONS, RES_VAL_PARTITION_NODE_CONNECTION_INFO])
         )
 
         self.total_partitions: int = res_fields["total_partitions"] if "total_partitions" in res_fields else 0
@@ -299,20 +301,20 @@ class GetQueuePartitionInfoResponse:
 
 class ProduceMessagesResponse:
     def __init__(self, res_bytes: bytes):
-        res_fields = _response_fields_mapper(res_bytes, set([OK]))
+        res_fields = _response_fields_mapper(res_bytes, set([RES_VAL_OK]))
 
         self.success: bool = res_fields["success"] if "success" in res_fields else False
 
 class RegisterConsumerResponse:
     def __init__(self, res_bytes: bytes):
-        res_fields = _response_fields_mapper(res_bytes, set([OK, CONSUMER_ID]))
+        res_fields = _response_fields_mapper(res_bytes, set([RES_VAL_OK, RES_VAL_CONSUMER_ID]))
 
         self.success: bool = res_fields["success"] if "success" in res_fields else False
         self.consumer_id: int = res_fields["consumer_id"] if "consumer_id" in res_fields else -1
 
 class GetConsumerAssignedPartitions:
     def __init__(self, res_bytes: bytes):
-        res_fields = _response_fields_mapper(res_bytes, set([ASSIGNED_PARTITIONS]))
+        res_fields = _response_fields_mapper(res_bytes, set([RES_VAL_ASSIGNED_PARTITIONS]))
 
         self.assigned_partitions: list[int] = []
 
@@ -332,11 +334,11 @@ class Message:
 
 class ConsumeMessagesResponse:
     def __init__(self, res_bytes: bytes):
-        res_fields = _response_fields_mapper(res_bytes, set([MESSAGES]))
+        res_fields = _response_fields_mapper(res_bytes, set([RES_VAL_MESSAGES]))
 
         self.messages: List[Message] | None = None
 
-        if "messages" in res_fields:
+        if "messages" in res_fields and len(res_fields["messages"]) > 0:
             self.messages = [
                 Message(
                     payload=message["payload"],

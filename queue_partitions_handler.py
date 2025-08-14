@@ -20,7 +20,7 @@ class QueuePartitionsHandler:
         self._partition_clients: Dict[int, SocketClient | None] = {} # (Node Id - SocketClient) Pair
         self._partitions_nodes: Dict[int, int] = {} # (Partition Id - Node Id) Pair
 
-        self.__fetch_info_wait_time_sec: int = 10
+        self.__fetch_info_wait_time_sec: int = 15
 
         self._stopped: bool = False
 
@@ -41,7 +41,7 @@ class QueuePartitionsHandler:
                     
                     res = GetQueuePartitionInfoResponse(
                         leader_socket.send_request(
-                            self._client._create_request(GET_QUEUE_PARTITIONS_INFO, [(QUEUE_NAME, self._conf.queue)], False)
+                            self._client._create_request(GET_QUEUE_PARTITIONS_INFO, [(QUEUE_NAME, self._conf.queue, None)], False)
                         )
                     )
 

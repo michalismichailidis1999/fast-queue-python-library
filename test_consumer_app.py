@@ -3,6 +3,7 @@ from broker_client import BrokerClient, BrokerClientConf
 from consumer import Consumer
 from conf import ConsumerConf
 from constants import *
+from responses import Message
 
 broker_conf = BrokerClientConf(
     # timeoutms=None,
@@ -26,6 +27,13 @@ consumer_conf = ConsumerConf(queue=queue_name, group_id="test", consume_from=CON
 
 consumer = Consumer(client=client, conf=consumer_conf)
 
+def handle_message(message: Message) -> None:
+    try:
+        print(f"Offset: {message.offset}, Timestamp: {message.timestamp}")
+        consumer.ack(offset=message.offset, partition=message.partition)
+    except Exception as e:
+        print(f"Something went wrong while processing message with offset {message.offset}. Reason: {e}")
+
 while True:
     try:
         messages = consumer.poll_messages()
@@ -33,7 +41,7 @@ while True:
         if messages is None:
             time.sleep(2)
 
-        for message in messages:
-            print(f"Offset: {message.offset}, Timestamp: {message.timestamp}")
+        for message in messages: handle_message(message)
+
     except Exception as e:
         print(f"{e}")
