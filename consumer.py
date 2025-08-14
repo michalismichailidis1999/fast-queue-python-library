@@ -11,8 +11,6 @@ import time
 
 class Consumer(QueuePartitionsHandler):
     def __init__(self, client: BrokerClient, conf: ConsumerConf):
-        if client._create_queue_command_run: time.sleep(10)
-
         super().__init__(client=client, consumer_conf=conf)
 
         self.__id: int = -1

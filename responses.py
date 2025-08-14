@@ -29,6 +29,22 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
             )
 
             offset += BOOL_SIZE
+        elif res_key == QUEUE_CREATED:
+            field_values["created"] = bool.from_bytes(
+                bytes=res_bytes[offset : (offset + BOOL_SIZE)],
+                byteorder=ENDIAS,
+                signed=False,
+            )
+
+            offset += BOOL_SIZE
+        elif res_key == QUEUE_DELETED:
+            field_values["deleted"] = bool.from_bytes(
+                bytes=res_bytes[offset : (offset + BOOL_SIZE)],
+                byteorder=ENDIAS,
+                signed=False,
+            )
+
+            offset += BOOL_SIZE
         elif res_key == LEADER_ID:
             field_values["leader_id"] = int.from_bytes(
                 bytes=res_bytes[offset : (offset + INT_SIZE)],
@@ -247,15 +263,17 @@ class GetLeaderControllerIdResponse:
 
 class CreateQueueResponse:
     def __init__(self, res_bytes: bytes):
-        res_fields = _response_fields_mapper(res_bytes, set([OK]))
+        res_fields = _response_fields_mapper(res_bytes, set([OK, QUEUE_CREATED]))
 
         self.success: bool = res_fields["success"] if "success" in res_fields else False
+        self.created: bool = res_fields["created"] if "created" in res_fields else False
 
 class DeleteQueueResponse:
     def __init__(self, res_bytes: bytes):
-        res_fields = _response_fields_mapper(res_bytes, set([OK]))
+        res_fields = _response_fields_mapper(res_bytes, set([OK, QUEUE_DELETED]))
 
         self.success: bool = res_fields["success"] if "success" in res_fields else False
+        self.deleted: bool = res_fields["deleted"] if "deleted" in res_fields else False
 
 class GetQueuePartitionInfoResponse:
     def __init__(self, res_bytes: bytes):

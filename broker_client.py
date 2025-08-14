@@ -2,6 +2,7 @@ from typing import Any, Dict, Set, Tuple
 from socket_client import *
 from constants import *
 from responses import (
+    DeleteQueueResponse,
     GetControllersConnectionInfoResponse,
     GetLeaderControllerIdResponse,
     CreateQueueResponse,
@@ -163,13 +164,14 @@ class BrokerClient:
             )
 
             if res.success:
-                print(f"Queue {queue} created")
+                if res.created:
+                    print(f"Queue {queue} created")
+                    time.sleep(15)
+                else: print(f"Queue {queue} already exists")
             else:
                 print(f"Creation of queue {queue} failed")
         except Exception as e:
             print(f"Error occured while trying to create queue {queue}. {e}")
-
-        self._create_queue_command_run = True
 
     def delete_queue(self, queue: str) -> None:
         if not queue:
@@ -181,7 +183,7 @@ class BrokerClient:
             if leader is None:
                 raise Exception("No elected controller leader yet")
 
-            res = CreateQueueResponse(
+            res = DeleteQueueResponse(
                 leader.send_request(
                     self._create_request(
                         CREATE_QUEUE,
@@ -194,7 +196,8 @@ class BrokerClient:
             )
 
             if res.success:
-                print(f"Queue {queue} deleted")
+                if res.deleted: print(f"Queue {queue} deleted")
+                else: print(f"Queue {queue} does not exist")
             else:
                 print(f"Deletion of queue {queue} failed")
         except Exception as e:
