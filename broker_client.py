@@ -109,17 +109,15 @@ class BrokerClient:
                     if res.leader_id in self.__controller_nodes:
                         success = True
                         break
-
-                    print("Leader not elected yet")
                 except Exception as e:
                     retries -= 1
 
-                    if called_from_contructor and retries <= 0:
-                        controller_conn.close()
-                        raise Exception(f"Error occured while trying to fetch leader controller update. {e}")
-                    else:
-                        print(f"Error occured while trying to fetch leader controller update. {e}")
-                        break
+                    if retries <= 0:
+                        if called_from_contructor:
+                            controller_conn.close()
+                            raise Exception(f"Error occured while trying to fetch leader controller update. {e}")
+                        else:
+                            print(f"Error occured while trying to fetch leader controller update. {e}")
                 finally:
                     if retries > 0 and not success: time.sleep(self.__fetch_info_wait_time_sec)
 
@@ -131,9 +129,6 @@ class BrokerClient:
             if self.__stopped:
                 controller_conn.close()
                 break
-
-            if self.__leader_node_id not in self.__controller_nodes: 
-                print("Could not connect to leader node")
 
             time.sleep(self.__fetch_info_wait_time_sec)
 

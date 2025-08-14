@@ -25,14 +25,18 @@ class Consumer(QueuePartitionsHandler):
 
         self.__auto_commits: Dict[int, int] = {}
 
+        self.__fetch_info_wait_time_sec: int = 15
+
         self.__register_consumer()
+
+        self.__retrieve_assigned_partitions(5, True)
 
         self._retrieve_queue_partitions_info(5, True)
 
         t1 = threading.Thread(target=self._retrieve_queue_partitions_info, args=[1, False], daemon=True)
         t1.start()
 
-        t2 = threading.Thread(target=self.__retrieve_assigned_partitions, daemon=True)
+        t2 = threading.Thread(target=self.__retrieve_assigned_partitions, args=[1, False], daemon=True)
         t2.start()
 
     def __register_consumer(self):
@@ -57,7 +61,8 @@ class Consumer(QueuePartitionsHandler):
                 )
 
                 if not res.success or res.consumer_id <= 0:
-                    raise Exception("Could not register consumer")
+                    time.sleep(self.__fetch_info_wait_time_sec / 3)
+                    continue
 
                 self.__lock.acquire_write()
 
@@ -68,12 +73,12 @@ class Consumer(QueuePartitionsHandler):
                 break
             except Exception as e:
                 print(f"Error occured while trying to register consumer. Reason: {e}")
-                time.sleep(3)
+                time.sleep(self.__fetch_info_wait_time_sec / 3)
 
-    def __retrieve_assigned_partitions(self):
-        retries: int = 3
-
+    def __retrieve_assigned_partitions(self, initial_retries: int = 3, called_from_constructor: bool = False):
         while not self._stopped:
+            retries: int = initial_retries
+
             try:
                 while retries > 0:
                     try:
@@ -102,21 +107,26 @@ class Consumer(QueuePartitionsHandler):
                         self.__lock.release_write()
 
                         if len(res.assigned_partitions) == 0:
-                            print("No assigned partitions yet")
-                            time.sleep(3)
+                            time.sleep(self.__fetch_info_wait_time_sec / 3)
                             continue
 
                         break
                     except Exception as e:
                         retries -= 1
 
-                        time.sleep(3)
+                        time.sleep(self.__fetch_info_wait_time_sec / 3)
 
-                        if retries <= 0: raise e
-
-                time.sleep(15)
+                        if retries <= 0:
+                            raise e
+                    finally: time.sleep(self.__fetch_info_wait_time_sec)
             except Exception as e:
+                if called_from_constructor: raise e
+
                 print(f"Error occured while trying to retrieve assigned consumer partitions. Reason: {e}")
+
+            if called_from_constructor: break
+
+            time.sleep(self.__fetch_info_wait_time_sec)
 
     def poll_message(self, offset: int | None = None) -> Message | None:
         messages: List[Message] | None = self.__poll_messages(offset=offset, only_one=True)

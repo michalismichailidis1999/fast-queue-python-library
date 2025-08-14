@@ -85,8 +85,6 @@ class QueuePartitionsHandler:
                     if len(list(filter(lambda x: x is not None, self._partitions_nodes.items()))) == self._total_partitions:
                         success = True
                         break
-
-                    print("Not all partitions have assigned leader yet")
                 except Exception as e:
                     retries -= 1
 
