@@ -40,8 +40,8 @@ class Consumer(QueuePartitionsHandler):
         t2.start()
 
     def __register_consumer(self):
-        # self.__id = 1
-        # return
+        self.__id = 1
+        return
     
         while True:
             try:

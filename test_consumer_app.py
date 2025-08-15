@@ -40,6 +40,7 @@ while True:
 
         if messages is None:
             time.sleep(2)
+            continue
 
         for message in messages: handle_message(message)
 
