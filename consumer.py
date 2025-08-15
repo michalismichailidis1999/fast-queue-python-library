@@ -1,10 +1,10 @@
 import threading
 from typing import Dict, List
+from exceptions import FastQueueException
 from lock import ReadWriteLock
 from queue_partitions_handler import QueuePartitionsHandler
 from broker_client import BrokerClient
 from conf import ConsumerConf
-import asyncio
 from responses import ConsumeMessagesResponse, GetConsumerAssignedPartitions, Message, RegisterConsumerResponse
 from constants import *
 import time
@@ -27,7 +27,7 @@ class Consumer(QueuePartitionsHandler):
 
         self.__fetch_info_wait_time_sec: int = 15
 
-        self.__register_consumer()
+        self.__register_consumer(5, True)
 
         self.__retrieve_assigned_partitions(5, True)
 
@@ -39,47 +39,75 @@ class Consumer(QueuePartitionsHandler):
         t2 = threading.Thread(target=self.__retrieve_assigned_partitions, args=[1, False], daemon=True)
         t2.start()
 
-    def __register_consumer(self):
-        self.__id = 1
-        return
+        t3 = threading.Thread(target=self.__register_consumer, args=[1, False], daemon=True)
+        t3.start()
+
+    def __register_consumer(self, initial_retries: int = 3, called_from_constructor: bool = False):
+        # self.__id = 1
+        # return
     
-        while True:
+        while not self._stopped:
+            if self.__id > 0:
+                time.sleep(self.__fetch_info_wait_time_sec)
+                continue
+
+            retries: int = initial_retries
+
             try:
-                leader_node = self._client._get_leader_node_socket_client()
+                while retries > 0:
+                    try:
+                        leader_node = self._client._get_leader_node_socket_client()
 
-                if leader_node is None:
-                    raise Exception("No controller leader elected yet")
+                        if leader_node is None:
+                            raise Exception("No controller leader elected yet")
 
-                res = RegisterConsumerResponse(
-                    leader_node.send_request(
-                        self._client._create_request(
-                            REGISTER_CONSUMER,
-                            [
-                                (QUEUE_NAME, self._conf.queue, None),
-                                (CONSUMER_GROUP_ID, self._conf.group_id, None),
-                                (CONSUME_FROM, True if self._conf.consume_from == CONSUME_EARLIEST else False, None)
-                            ]
+                        res = RegisterConsumerResponse(
+                            leader_node.send_request(
+                                self._client._create_request(
+                                    REGISTER_CONSUMER,
+                                    [
+                                        (QUEUE_NAME, self._conf.queue, None),
+                                        (CONSUMER_GROUP_ID, self._conf.group_id, None),
+                                        (CONSUME_FROM, True if self._conf.consume_from == CONSUME_EARLIEST else False, None)
+                                    ]
+                                )
+                            )
                         )
-                    )
-                )
 
-                if not res.success or res.consumer_id <= 0:
-                    time.sleep(self.__fetch_info_wait_time_sec / 3)
-                    continue
+                        if not res.success or res.consumer_id <= 0:
+                            time.sleep(self.__fetch_info_wait_time_sec / 3)
+                            continue
 
-                self.__lock.acquire_write()
+                        self.__lock.acquire_write()
 
-                self.__id = res.consumer_id
+                        self.__id = res.consumer_id
 
-                self.__lock.release_write()
+                        self.__lock.release_write()
 
-                break
+                        break
+                    except Exception as e:
+                        retries -= 1
+
+                        time.sleep(self.__fetch_info_wait_time_sec / 3)
+
+                        if retries <= 0:
+                            raise e
+                    finally: time.sleep(self.__fetch_info_wait_time_sec)
             except Exception as e:
+                if called_from_constructor: raise e
+
                 print(f"Error occured while trying to register consumer. Reason: {e}")
-                time.sleep(self.__fetch_info_wait_time_sec / 3)
+            
+            if called_from_constructor: break
+
+            time.sleep(self.__fetch_info_wait_time_sec)
 
     def __retrieve_assigned_partitions(self, initial_retries: int = 3, called_from_constructor: bool = False):
         while not self._stopped:
+            if self.__get_consumer_id() <= 0:
+                time.sleep(self.__fetch_info_wait_time_sec)
+                continue
+
             retries: int = initial_retries
 
             try:
@@ -97,7 +125,7 @@ class Consumer(QueuePartitionsHandler):
                                     [
                                         (QUEUE_NAME, self._conf.queue, None),
                                         (CONSUMER_GROUP_ID, self._conf.group_id, None),
-                                        (CONSUMER_ID, self.__id, LONG_LONG_SIZE)
+                                        (CONSUMER_ID, self.__get_consumer_id(), LONG_LONG_SIZE)
                                     ]
                                 )
                             )
@@ -132,12 +160,30 @@ class Consumer(QueuePartitionsHandler):
             time.sleep(self.__fetch_info_wait_time_sec)
 
     def poll_message(self, offset: int | None = None) -> Message | None:
-        messages: List[Message] | None = self.__poll_messages(offset=offset, only_one=True)
+        if self.__get_consumer_id() <= 0: return None
 
-        return messages[0] if messages is not None and len(messages) > 0 else None
+        try:
+            messages: List[Message] | None = self.__poll_messages(offset=offset, only_one=True)
+
+            return messages[0] if messages is not None and len(messages) > 0 else None
+        except FastQueueException as e:
+            if e.error_code == CONSUMER_UNREGISTERED:
+                self.__reset_consumer()
+            return None
+        except:
+            return None
     
     def poll_messages(self, offset: int | None = None) -> List[Message] | None:
-        return self.__poll_messages(offset=offset)
+        if self.__get_consumer_id() <= 0: return None
+
+        try:
+            return self.__poll_messages(offset=offset)
+        except FastQueueException as e:
+            if e.error_code == CONSUMER_UNREGISTERED:
+                self.__reset_consumer()
+            return None
+        except:
+            return None
 
     def __poll_messages(self, offset: int | None = None, only_one: bool = False) -> List[Message] | None:
         partition_index_to_fetch: int = -1
@@ -155,14 +201,14 @@ class Consumer(QueuePartitionsHandler):
             if partition_client is not None: break
 
         if partition_client is None: return None
-        
+
         messages = ConsumeMessagesResponse(partition_client.send_request(
             self._client._create_request(
                 CONSUME,
                 [
                     (QUEUE_NAME, self._conf.queue, None),
                     (CONSUMER_GROUP_ID, self._conf.group_id, None),
-                    (CONSUMER_ID, self.__id, LONG_LONG_SIZE),
+                    (CONSUMER_ID, self.__get_consumer_id(), LONG_LONG_SIZE),
                     (PARTITION, partition_index_to_fetch, None),
                     (MESSAGE_OFFSET, offset if offset else 0, LONG_LONG_SIZE),
                     (READ_SINGLE_OFFSET_ONLY, only_one, None)
@@ -183,23 +229,34 @@ class Consumer(QueuePartitionsHandler):
         return messages
         
     def ack(self, offset: int, partition: int) -> None:
+        if self.__get_consumer_id() <= 0: return None
+
         partition_client = self._get_leader_node_socket_client(partition_id=partition)
 
         if partition_client is None:
             raise Exception("Could not commit message offset, no leader has been elected for partition yet")
         
-        partition_client.send_request(
-            self._client._create_request(
-                ACK,
-                [
-                    (QUEUE_NAME, self._conf.queue, None),
-                    (CONSUMER_GROUP_ID, self._conf.group_id, None),
-                    (CONSUMER_ID, self.__id, LONG_LONG_SIZE),
-                    (PARTITION, partition, None),
-                    (MESSAGE_OFFSET, offset, LONG_LONG_SIZE)
-                ]
+        try:
+            partition_client.send_request(
+                self._client._create_request(
+                    ACK,
+                    [
+                        (QUEUE_NAME, self._conf.queue, None),
+                        (CONSUMER_GROUP_ID, self._conf.group_id, None),
+                        (CONSUMER_ID, self.__get_consumer_id(), LONG_LONG_SIZE),
+                        (PARTITION, partition, None),
+                        (MESSAGE_OFFSET, offset, LONG_LONG_SIZE)
+                    ]
+                )
             )
-        )
+        except FastQueueException as e:
+            if e.error_code == CONSUMER_UNREGISTERED:
+                self.__reset_consumer()
+                return
+
+            raise e
+        except Exception as e:
+            raise e
 
     def __get_total_assigned_partitions(self):
         self.__lock.acquire_write()
@@ -240,12 +297,29 @@ class Consumer(QueuePartitionsHandler):
 
             time.sleep(self._conf.auto_commit_interval_ms / 1000)
 
-    def close(self):
+    def __get_consumer_id(self) -> int:
+        self.__lock.acquire_write()
+
+        id: int = self.__id
+
+        self.__lock.release_write()
+
+        return id
+
+    def __reset_consumer(self) -> None:
+        self.__lock.acquire_write()
+
+        self.__id = -1
+        self.__assigned_partitions = []
+
+        self.__lock.release_write()
+
+    def close(self) -> None:
         self.stopped = True
 
         self.client.close()
 
         print("Consumer closed")
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.close()
