@@ -27,7 +27,14 @@ class Consumer(QueuePartitionsHandler):
 
         self.__fetch_info_wait_time_sec: int = 15
 
-        self.__register_consumer(5, True)
+        while True:
+            try:
+                self.__register_consumer(5, True)
+            except: pass
+            finally:
+                if self.__id > 0:
+                    print(f"Consumer registered with id {self.__id}")
+                    break
 
         self.__retrieve_assigned_partitions(5, True)
 
