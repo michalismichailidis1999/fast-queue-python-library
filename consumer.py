@@ -30,7 +30,8 @@ class Consumer(QueuePartitionsHandler):
         while True:
             try:
                 self.__register_consumer(5, True)
-            except: pass
+            except:
+                print("Consumer registration failed. Retrying again")
             finally:
                 if self.__id > 0:
                     print(f"Consumer registered with id {self.__id}")
