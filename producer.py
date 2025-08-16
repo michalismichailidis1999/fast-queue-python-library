@@ -254,6 +254,8 @@ class Producer(QueuePartitionsHandler):
     def __get_message_partition(self, key: bytes = None) -> int:
         if self._total_partitions == 0: return -1
 
+        return 0
+
         if key == None:
             partition: int = self.__prev_partition_sent
 
