@@ -69,10 +69,16 @@ class ConnectionPool:
 
         self.__stopped: bool = False
 
+        self.__ping_total_bytes = 9
+        self.__ping_bytes: bytes = self.__ping_total_bytes.to_bytes(length=INT_SIZE, byteorder=ENDIAS) + PING.to_bytes(length=INT_SIZE, byteorder=ENDIAS) + True.to_bytes(length=BOOL_SIZE, byteorder=ENDIAS)
+
         self.__add_connection(address=address, port=port)
 
         t = threading.Thread(target=self.__keep_pool_connections_to_maximum, daemon=True)
         t.start()
+
+        t2 = threading.Thread(target=self.__ping_connections, daemon=True)
+        t2.start()
 
     def get_connections_count(self) -> int:
         self.__lock.acquire_read()
@@ -83,18 +89,20 @@ class ConnectionPool:
 
         return count
     
-    def get_connection(self) -> SocketConnection | None:
+    def get_connection(self, no_wait: bool = False) -> SocketConnection | None:
         conn: SocketConnection | None = None
 
         try:
-            conn = self.__pool.get(
-                block=True,
-                timeout=(
-                    int(self.__conf._timeoutms / 1000) + 1
-                    if self.__conf._timeoutms is not None
-                    else None
-                ),
-            )
+            if not no_wait:
+                conn = self.__pool.get(
+                    block=True,
+                    timeout=(
+                        int(self.__conf._timeoutms / 1000) + 1
+                        if self.__conf._timeoutms is not None
+                        else None
+                    ),
+                )
+            else: conn = self.__pool.get_nowait()
         except: return None
 
         if conn is not None:
@@ -167,6 +175,45 @@ class ConnectionPool:
             if self.__stopped: break
             
             time.sleep(self.__wait_seconds_to_add_new_conn)
+
+    def __ping_connections(self):
+        while not self.__stopped:
+            try:
+                time.sleep(self.__conf._connections_ping_time_ms / 1000)
+
+                connections_to_return: Queue[SocketClient | None] = Queue()
+                
+                try:
+                    while not self.__pool.empty():
+                        try:
+                            conn = self.get_connection(no_wait=True)
+
+                            if conn:
+                                try:
+                                    conn.send_bytes(self.__ping_bytes)
+
+                                    res = conn.receive_bytes()
+
+                                    if len(res) == BOOL_SIZE and bool.from_bytes(bytes=res, byteorder=ENDIAS):
+                                        print("Ping success")
+                                        connections_to_return.put(conn)
+                                    else:
+                                        print("Ping error")
+                                        connections_to_return.put(None)
+                                except Exception as e:
+                                    connections_to_return.put(None)
+                                    raise e
+                                
+                        except Empty: break
+                        except Exception as e:
+                            print(f"Error occured while pinging socket connection. Reason: {e}")
+                except Exception as e:
+                    print(f"Error occured while trying to ping pool socket connections. Reason: {e}")
+
+                for conn in list(connections_to_return.queue):
+                    self.return_connection(conn)
+            except Exception as e:
+                print("Something went wrong while trying to ping socket connections")
 
     def close(self):
         self.__stopped = True

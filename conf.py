@@ -13,7 +13,8 @@ class SocketClientConf:
         cert: str = None,
         cert_key: str = None,
         cert_pass: str = None,
-        max_pool_connections: int = 10
+        max_pool_connections: int = 10,
+        connections_ping_time_ms: int = 15000
     ) -> None:
         if timeoutms < 0:
             raise ValueError("timeoutms cannot be less than 0")
@@ -27,6 +28,9 @@ class SocketClientConf:
         if max_pool_connections < 1:
             raise ValueError("max_pool_connections cannot be less than 1")
         
+        if connections_ping_time_ms < 0:
+            raise ValueError("connections_ping_time_ms cannot be less than 0")
+        
         self._timeoutms = timeoutms
         self._retries: int = retries
         self._retry_wait_ms: int = retry_wait_ms
@@ -36,6 +40,7 @@ class SocketClientConf:
         self._cert_key: str = cert_key
         self._cert_pass: str = cert_pass
         self._max_pool_connections: int = max_pool_connections
+        self._connections_ping_time_ms: int = connections_ping_time_ms
 
 class BrokerClientConf(SocketClientConf):
 
@@ -52,7 +57,8 @@ class BrokerClientConf(SocketClientConf):
         authentication_enable: bool = False,
         username: str = None,
         password: str = None,
-        max_pool_connections: int = 10
+        max_pool_connections: int = 10,
+        connections_ping_time_ms: int = 15000
     ) -> None:
         super().__init__(
             timeoutms=timeoutms,
@@ -63,7 +69,8 @@ class BrokerClientConf(SocketClientConf):
             cert=cert,
             cert_key=cert_key,
             cert_pass=cert_pass,
-            max_pool_connections=max_pool_connections
+            max_pool_connections=max_pool_connections,
+            connections_ping_time_ms=connections_ping_time_ms
         )
 
         self._authentication_enable: bool = authentication_enable
@@ -84,7 +91,7 @@ class ProducerConf(CommonConf):
     """
 
     def __init__(self, queue: str, wait_ms: int = None, max_batch_size: int = 16384, max_produce_request_bytes: int = 10_000_000) -> None:
-        if queue is None or queue is "":
+        if queue is None or queue == "":
             raise ValueError("queue cannot be empty")
 
         if wait_ms is not None and wait_ms < 0:
@@ -113,10 +120,10 @@ class ConsumerConf(CommonConf):
     """
 
     def __init__(self, queue: str, group_id: str | None = None, consume_from:str = CONSUME_LATEST, auto_commit: bool = True, auto_commit_interval_ms: int = 3000):
-        if queue is None or queue is "":
+        if queue is None or queue == "":
             raise ValueError("queue cannot be empty")
         
-        if consume_from is None or queue is "":
+        if consume_from is None or queue == "":
             raise ValueError("consume_from cannot be empty")
         
         if consume_from != CONSUME_LATEST and consume_from != CONSUME_EARLIEST:

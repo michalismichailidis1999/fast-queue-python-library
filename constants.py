@@ -6,6 +6,7 @@ INT_SIZE = ctypes.sizeof(ctypes.c_int)
 LONG_LONG_SIZE = ctypes.sizeof(ctypes.c_longlong)
 
 # Request Types
+PING = 0
 CREATE_QUEUE = 1
 DELETE_QUEUE = 2
 PRODUCE = 3

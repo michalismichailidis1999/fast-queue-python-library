@@ -47,7 +47,8 @@ while True:
     key = input("Enter a key for your message (Optional): ")
 
     for i in range(10000):
-        asyncio.run(producer.produce(message=f"{message} {i}", key=f"{key} {i}"))#, on_delivery=on_delivery_callback))
+        j = i % 100
+        asyncio.run(producer.produce(message=f"{message} {j}", key=f"{key} {j}"))#, on_delivery=on_delivery_callback))
         if i % 10000 == 0 and i > 0:
             end = time.time()
             duration = end - start
