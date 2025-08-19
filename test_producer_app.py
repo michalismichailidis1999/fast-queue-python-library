@@ -33,6 +33,6 @@ while True:
 
     key = input("Enter a key for your message (Optional): ")
 
-    asyncio.run(producer.produce(message=message, key=key, on_delivery=on_delivery_callback))
+    producer.produce(message=message, key=key, on_delivery=on_delivery_callback)
 
 producer.close()

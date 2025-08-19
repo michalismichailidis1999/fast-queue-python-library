@@ -20,25 +20,22 @@ consumer_conf = ConsumerConf(queue=queue_name, group_id=group_id, consume_from=C
 
 consumer = Consumer(client=client, conf=consumer_conf)
 
-async def handle_message(message: Message) -> None:
+def handle_message(message: Message) -> None:
     try:
         print(f"Offset: {message.offset}, Timestamp: {message.timestamp}")
-        await consumer.ack(offset=message.offset, partition=message.partition)
+        consumer.ack(offset=message.offset, partition=message.partition)
     except Exception as e:
         print(f"Something went wrong while processing message with offset {message.offset}. Reason: {e}")
 
-async def consume_messages():
-    while True:
-        try:
-            await messages = consumer.poll_messages()
+while True:
+    try:
+        messages = consumer.poll_messages()
 
-            if messages is None:
-                time.sleep(2)
-                continue
+        if messages is None:
+            time.sleep(2)
+            continue
 
-            for message in messages: handle_message(message)
+        for message in messages: handle_message(message)
 
-        except Exception as e:
-            print(f"{e}")
-
-asyncio.run(consume_messages)
+    except Exception as e:
+        print(f"{e}")

@@ -8,7 +8,6 @@ import mmh3
 import random
 from socket_client import SocketClient
 from lock import ReadWriteLock
-import asyncio
 from conf import ProducerConf
 from queue_partitions_handler import QueuePartitionsHandler
 
@@ -81,7 +80,7 @@ class Producer(QueuePartitionsHandler):
         )
 
     # TODO: Check function's response time
-    async def produce(
+    def produce(
         self,
         message: str,
         key: str = None,
@@ -95,7 +94,7 @@ class Producer(QueuePartitionsHandler):
         ex: Exception | None = None
 
         try:
-            await self.__produce(message=message.encode(), key=(key.encode() if key is not None and key != "" else None))
+            self.__produce(message=message.encode(), key=(key.encode() if key is not None and key != "" else None))
         except Exception as e:
             ex = e
         finally:
@@ -104,7 +103,7 @@ class Producer(QueuePartitionsHandler):
 
         if ex is not None: raise ex
 
-    async def __produce(
+    def __produce(
         self,
         message: bytes,
         key: bytes | None,
@@ -122,9 +121,9 @@ class Producer(QueuePartitionsHandler):
         total_cached_bytes = self.__increment_cached_bytes(len(message))
 
         if self._conf.max_batch_size <= total_cached_bytes or not self.__send_messages_in_batches:
-            await self.flush()
+            self.flush()
 
-    async def flush(self):
+    def flush(self):
         self.__flush_lock.acquire_write()
 
         if not self.__can_flush:
@@ -144,16 +143,11 @@ class Producer(QueuePartitionsHandler):
         self.__messages.read_lock.acquire_write()
 
         try:
-            tasks = [
-                self.__flush_partition_messages(partition=partition)
-                for partition in range(self._total_partitions)
-            ]
-
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            for result in results:
-                if isinstance(result, Exception):
-                    print(f"Error occured while flushing partition messages. {result}")
+            for partition in range(self._total_partitions):
+                try:
+                    self.__flush_partition_messages(partition=partition)
+                except Exception as e:
+                    print(f"Error occured while flushing partition {partition} messages. Reason: {e}")
                     
             self.__messages.clear_read_buffer()
 
@@ -170,7 +164,7 @@ class Producer(QueuePartitionsHandler):
 
         if ex is not None: raise ex
 
-    async def __flush_partition_messages(self, partition: int):
+    def __flush_partition_messages(self, partition: int):
         try:
             partition_client = self._get_leader_node_socket_client(partition_id=partition)
 
@@ -235,7 +229,7 @@ class Producer(QueuePartitionsHandler):
         try:
             if self.__total_bytes_cached > 0:
                 print("Trying to flush remaining messages before shutdown..")
-                asyncio.run(self.flush())
+                self.flush()
         except Exception as e:
             print(f"Could not flush remaining messages. Reason: {e}")
 
@@ -247,15 +241,11 @@ class Producer(QueuePartitionsHandler):
         while not self._stopped:
             time.sleep(self._conf.wait_ms / 1000)
             try:
-                asyncio.run(self.flush())
+                self.flush()
             except Exception as e:
                 print(f"Error occured while flushing messages periodically. {e}")
 
     def __get_message_partition(self, key: bytes = None) -> int:
-        if self._total_partitions == 0: return -1
-
-        return 0
-
         if key == None:
             partition: int = self.__prev_partition_sent
 
