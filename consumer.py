@@ -1,3 +1,4 @@
+import asyncio
 import threading
 from typing import Dict, List
 from exceptions import FastQueueException
@@ -167,11 +168,11 @@ class Consumer(QueuePartitionsHandler):
 
             time.sleep(self.__fetch_info_wait_time_sec)
 
-    def poll_message(self, offset: int | None = None) -> Message | None:
+    async def poll_message(self, offset: int | None = None) -> Message | None:
         if self.__get_consumer_id() <= 0: return None
 
         try:
-            messages: List[Message] | None = self.__poll_messages(offset=offset, only_one=True)
+            messages: List[Message] | None = await self.__poll_messages(offset=offset, only_one=True)
 
             return messages[0] if messages is not None and len(messages) > 0 else None
         except FastQueueException as e:
@@ -181,11 +182,11 @@ class Consumer(QueuePartitionsHandler):
         except:
             return None
     
-    def poll_messages(self, offset: int | None = None) -> List[Message] | None:
+    async def poll_messages(self, offset: int | None = None) -> List[Message] | None:
         if self.__get_consumer_id() <= 0: return None
 
         try:
-            return self.__poll_messages(offset=offset)
+            return await self.__poll_messages(offset=offset)
         except FastQueueException as e:
             if e.error_code == CONSUMER_UNREGISTERED:
                 self.__reset_consumer()
@@ -193,7 +194,7 @@ class Consumer(QueuePartitionsHandler):
         except:
             return None
 
-    def __poll_messages(self, offset: int | None = None, only_one: bool = False) -> List[Message] | None:
+    async def __poll_messages(self, offset: int | None = None, only_one: bool = False) -> List[Message] | None:
         partition_index_to_fetch: int = -1
         partition_client: SocketClient | None = None
 
@@ -210,19 +211,23 @@ class Consumer(QueuePartitionsHandler):
 
         if partition_client is None: return None
 
-        messages = ConsumeMessagesResponse(partition_client.send_request(
-            self._client._create_request(
-                CONSUME,
-                [
-                    (QUEUE_NAME, self._conf.queue, None),
-                    (CONSUMER_GROUP_ID, self._conf.group_id, None),
-                    (CONSUMER_ID, self.__get_consumer_id(), LONG_LONG_SIZE),
-                    (PARTITION, partition_index_to_fetch, None),
-                    (MESSAGE_OFFSET, offset if offset else 0, LONG_LONG_SIZE),
-                    (READ_SINGLE_OFFSET_ONLY, only_one, None)
-                ]
+        messages = ConsumeMessagesResponse(
+            asyncio.run(
+                partition_client.send_request(
+                    self._client._create_request(
+                        CONSUME,
+                        [
+                            (QUEUE_NAME, self._conf.queue, None),
+                            (CONSUMER_GROUP_ID, self._conf.group_id, None),
+                            (CONSUMER_ID, self.__get_consumer_id(), LONG_LONG_SIZE),
+                            (PARTITION, partition_index_to_fetch, None),
+                            (MESSAGE_OFFSET, offset if offset else 0, LONG_LONG_SIZE),
+                            (READ_SINGLE_OFFSET_ONLY, only_one, None)
+                        ]
+                    )
+                )
             )
-        )).messages
+        ).messages
 
         if messages:
             if self._conf.auto_commit: self.__auto_commit_lock.acquire_write()
@@ -236,7 +241,7 @@ class Consumer(QueuePartitionsHandler):
 
         return messages
         
-    def ack(self, offset: int, partition: int) -> None:
+    async def ack(self, offset: int, partition: int) -> None:
         if self.__get_consumer_id() <= 0: return None
 
         partition_client = self._get_leader_node_socket_client(partition_id=partition)
@@ -297,7 +302,7 @@ class Consumer(QueuePartitionsHandler):
 
             try:
                 for partition, offset in self.__auto_commits.values():
-                    self.ack(offset=offset, partition=partition)
+                    asyncio.run(self.ack(offset=offset, partition=partition))
             except Exception as e:
                 print(f"Error occured while auto commiting offsets. Reason: {e}")
 
