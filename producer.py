@@ -1,7 +1,7 @@
 from typing import Callable, Dict, Generator
 from broker_client import *
 from constants import *
-from responses import GetQueuePartitionInfoResponse, ProduceMessagesResponse
+from responses import ProduceMessagesResponse
 import threading
 import time
 import mmh3

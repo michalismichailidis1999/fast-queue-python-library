@@ -4,7 +4,7 @@ from broker_client import BrokerClient
 from lock import ReadWriteLock
 from typing import Dict, Tuple, Set
 import time
-from responses import GetQueuePartitionInfoResponse, GetLeaderControllerIdResponse
+from responses import GetQueuePartitionInfoResponse
 from constants import *
 
 class QueuePartitionsHandler:

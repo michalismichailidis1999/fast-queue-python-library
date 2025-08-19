@@ -1,4 +1,3 @@
-import asyncio
 import time
 from broker_client import BrokerClient, BrokerClientConf
 from consumer import Consumer
