@@ -77,8 +77,8 @@ class ConnectionPool:
         t = threading.Thread(target=self.__keep_pool_connections_to_maximum, daemon=True)
         t.start()
 
-        t2 = threading.Thread(target=self.__ping_connections, daemon=True)
-        t2.start()
+        # t2 = threading.Thread(target=self.__ping_connections, daemon=True)
+        # t2.start()
 
     def get_connections_count(self) -> int:
         self.__lock.acquire_read()
