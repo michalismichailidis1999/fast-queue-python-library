@@ -1,5 +1,5 @@
 import threading
-from typing import Dict, List
+from typing import Dict, List, Set
 from exceptions import FastQueueException
 from lock import ReadWriteLock
 from queue_partitions_handler import QueuePartitionsHandler
@@ -296,11 +296,17 @@ class Consumer(QueuePartitionsHandler):
         while not self._stopped:
             self.__auto_commit_lock.acquire_write()
 
+            to_remove: Set[int] = set()
+
             try:
                 for partition, offset in self.__auto_commits.items():
                     self.ack(offset=offset, partition=partition)
+                    to_remove.add(partition)
             except Exception as e:
                 print(f"Error occured while auto commiting offsets. Reason: {e}")
+
+            for partition in to_remove:
+                del self.__auto_commits[partition]
 
             self.__auto_commit_lock.release_write()
 

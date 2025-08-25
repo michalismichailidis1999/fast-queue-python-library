@@ -98,7 +98,7 @@ class ConnectionPool:
                     block=True,
                     timeout=(
                         int(self.__conf._timeoutms / 1000) + 1
-                        if self.__conf._timeoutms is not None
+                        if self.__conf._timeoutms is not None and self.__conf._timeoutms > 0
                         else None
                     ),
                 )
