@@ -101,7 +101,6 @@ class Consumer(QueuePartitionsHandler):
 
                         if retries <= 0:
                             raise e
-                    finally: time.sleep(self.__fetch_info_wait_time_sec)
             except Exception as e:
                 if called_from_constructor: raise e
 
@@ -158,7 +157,6 @@ class Consumer(QueuePartitionsHandler):
 
                         if retries <= 0:
                             raise e
-                    finally: time.sleep(self.__fetch_info_wait_time_sec)
             except Exception as e:
                 if called_from_constructor: raise e
 
