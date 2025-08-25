@@ -297,7 +297,7 @@ class Consumer(QueuePartitionsHandler):
             self.__auto_commit_lock.acquire_write()
 
             try:
-                for partition, offset in self.__auto_commits.values():
+                for partition, offset in self.__auto_commits.items():
                     self.ack(offset=offset, partition=partition)
             except Exception as e:
                 print(f"Error occured while auto commiting offsets. Reason: {e}")
