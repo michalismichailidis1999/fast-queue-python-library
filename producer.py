@@ -176,7 +176,7 @@ class Producer(QueuePartitionsHandler):
             to_send = []
 
             for message, key in self.__messages.read_partition_messages(partition=partition):
-                if remaining_bytes - len(message) - len(key) < 0:
+                if remaining_bytes - len(message) - (len(key) if key is not None else 0) < 0:
                     self.__send_messages_to_partition_leader(
                         partition_client=partition_client, 
                         partition=partition, 
@@ -187,7 +187,7 @@ class Producer(QueuePartitionsHandler):
                     to_send.clear()
                 else: 
                     to_send.append((message, key))
-                    remaining_bytes -= (len(message) + len(key))
+                    remaining_bytes -= (len(message) + (len(key) if key is not None else 0))
 
             if len(to_send) > 0:
                 self.__send_messages_to_partition_leader(
