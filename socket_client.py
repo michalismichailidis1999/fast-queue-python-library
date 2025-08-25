@@ -77,8 +77,8 @@ class ConnectionPool:
         t = threading.Thread(target=self.__keep_pool_connections_to_maximum, daemon=True)
         t.start()
 
-        # t2 = threading.Thread(target=self.__ping_connections, daemon=True)
-        # t2.start()
+        t2 = threading.Thread(target=self.__ping_connections, daemon=True)
+        t2.start()
 
     def get_connections_count(self) -> int:
         self.__lock.acquire_read()
@@ -181,37 +181,27 @@ class ConnectionPool:
             try:
                 time.sleep(self.__conf._connections_ping_time_ms / 1000)
 
-                connections_to_return: Queue[SocketClient | None] = Queue()
-                
                 try:
-                    while not self.__pool.empty():
-                        try:
-                            conn = self.get_connection(no_wait=True)
+                    total_connections = self.get_connections_count()
 
-                            if conn:
-                                try:
-                                    conn.send_bytes(self.__ping_bytes)
+                    for _ in range(total_connections):
+                        conn = self.get_connection(no_wait=True)
 
-                                    res = conn.receive_bytes()
+                        if conn is None: break
 
-                                    if len(res) == BOOL_SIZE and bool.from_bytes(bytes=res, byteorder=ENDIAS):
-                                        # print("Ping success")
-                                        connections_to_return.put(conn)
-                                    else:
-                                        print("Ping error")
-                                        connections_to_return.put(None)
-                                except Exception as e:
-                                    connections_to_return.put(None)
-                                    raise e
-                                
-                        except Empty: break
-                        except Exception as e:
-                            print(f"Error occured while pinging socket connection. Reason: {e}")
+                        conn.send_bytes(self.__ping_bytes)
+
+                        res = conn.receive_bytes()
+
+                        if len(res) == BOOL_SIZE and bool.from_bytes(bytes=res, byteorder=ENDIAS):
+                            self.return_connection(conn)
+                        else:
+                            self.return_connection(None)
+                            print("Connection ping failed")
+
                 except Exception as e:
                     print(f"Error occured while trying to ping pool socket connections. Reason: {e}")
 
-                for conn in list(connections_to_return.queue):
-                    self.return_connection(conn)
             except Exception as e:
                 print("Something went wrong while trying to ping socket connections")
 
