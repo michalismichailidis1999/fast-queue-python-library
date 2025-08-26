@@ -25,16 +25,19 @@ producer_conf = ProducerConf(queue=queue_name)#, wait_ms=15000, max_batch_size=1
 producer = Producer(client=client, conf=producer_conf, on_delivery_callback=on_delivery_callback)
 
 while True:
-    message = input("Enter a message (type 'exit' to stop): ")
+    try:
+        message = input("Enter a message (type 'exit' to stop): ")
 
-    if not message:
-        print("Cannot produce empty message")
-        continue
+        if not message:
+            print("Cannot produce empty message")
+            continue
 
-    if message == "exit": break
+        if message == "exit": break
 
-    key = input("Enter a key for your message (Optional): ")
+        key = input("Enter a key for your message (Optional): ")
 
-    producer.produce(message=message, key=key)
+        producer.produce(message=message, key=key)
+    except Exception as e:
+        print(f"Could not produce message '{message}'. Reason: {e}")
 
 producer.close()

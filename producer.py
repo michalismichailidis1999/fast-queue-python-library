@@ -114,6 +114,9 @@ class Producer(QueuePartitionsHandler):
         partition: int = self.__get_message_partition(key)
         self.__prev_partition_sent = partition
 
+        if self._get_leader_node_socket_client(partition_id=partition) is None:
+            raise Exception(f"Leader for partition {partition} has not been elected yet")
+
         self.__messages.write_lock.acquire_write()
         self.__messages.append_partition_message(partition=partition, message=(message, key))
         self.__messages.write_lock.release_write()
