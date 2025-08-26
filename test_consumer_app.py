@@ -22,7 +22,6 @@ consumer = Consumer(client=client, conf=consumer_conf)
 def handle_message(message: Message) -> None:
     try:
         print(message)
-        consumer.ack(offset=message.offset, partition=message.partition)
     except Exception as e:
         print(f"Something went wrong while processing message with offset {message.offset}. Reason: {e}")
 
@@ -34,7 +33,8 @@ while True:
             time.sleep(2)
             continue
 
-        for message in messages: handle_message(message)
+        for message in messages:
+            handle_message(message)
 
     except Exception as e:
         print(f"{e}")
