@@ -218,7 +218,7 @@ class BrokerClient:
                     total_bytes += INT_SIZE
                     
                     for message, key in val:
-                        message_bytes = 2 * INT_SIZE + len(message) + len(key)
+                        message_bytes = 2 * INT_SIZE + len(message) + (len(key) if key is not None else 0)
                         total_bytes += message_bytes
                         messages_total_bytes += message_bytes
 
@@ -246,7 +246,7 @@ class BrokerClient:
                     pos += INT_SIZE
 
                     for message, key in val:
-                        key_len = len(key)
+                        key_len = len(key) if key is not None else 0
                         message_len = len(message)
 
                         req_bytes[pos:(pos + INT_SIZE)] = self.__val_to_bytes(key_len)

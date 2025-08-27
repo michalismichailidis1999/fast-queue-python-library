@@ -12,7 +12,7 @@ def on_delivery_callback(message: bytes, key: bytes | None, exception: Exception
 
 broker_conf = BrokerClientConf()
 
-client = BrokerClient(conf=broker_conf, controller_node=["127.0.0.1", 9877])
+client = BrokerClient(conf=broker_conf, controller_node=["localhost", 9877])
 
 queue_name = input("Enter the queue you want to produce messages to: ")
 
