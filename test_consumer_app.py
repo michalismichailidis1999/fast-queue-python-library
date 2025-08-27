@@ -11,7 +11,7 @@ client = BrokerClient(conf=broker_conf, controller_node=["127.0.0.1", 9877])
 
 queue_name = input("Enter the queue you want to consume messages from: ")
 
-client.create_queue(queue=queue_name, partitions=2, replication_factor=2)
+client.create_queue(queue=queue_name, partitions=1, replication_factor=1)
 
 group_id = input("Enter a group id you want to use for your consumer: ")
 
