@@ -34,21 +34,20 @@ class BrokerClient:
 
         self.__stopped: bool = False
 
-        self.__fetch_info_wait_time_sec: int = 15
-
         # initialize the leader
-        self.__check_for_leader_update(controller_node=controller_node, retries=5, called_from_contructor=True)
+        while self.__leader_node_id <= 0:
+            self.__check_for_leader_update(controller_node=controller_node, retries=10, time_to_wait=2, called_from_contructor=True)
 
         print(
             f"Connected successfully to controller quorum leader {self.__leader_node_id}"
         )
 
         # check periodically for leader change
-        t = threading.Thread(target=self.__check_for_leader_update, daemon=True, args=[controller_node, 1, False])
+        t = threading.Thread(target=self.__check_for_leader_update, daemon=True, args=[controller_node, 1, 15, False])
         t.start()
 
-    def __check_for_leader_update(self, controller_node: Tuple[str, int], retries: int, called_from_contructor: bool = False):
-        controller_conn: SocketClient = SocketClient(address=controller_node[0], port=controller_node[1], conf=self._conf, max_pool_connections=1)
+    def __check_for_leader_update(self, controller_node: Tuple[str, int], retries: int, time_to_wait: int, called_from_contructor: bool = False):
+        controller_conn: SocketClient = SocketClient(address=controller_node[0], port=controller_node[1], conf=self._conf, max_pool_connections=2)
 
         initial_retries: int = retries
 
@@ -119,7 +118,7 @@ class BrokerClient:
                         else:
                             print(f"Error occured while trying to fetch leader controller update. {e}")
                 finally:
-                    if retries > 0 and not success: time.sleep(self.__fetch_info_wait_time_sec)
+                    if retries > 0 and not success: time.sleep(time_to_wait)
 
             if called_from_contructor:
                 controller_conn.close()
@@ -130,7 +129,7 @@ class BrokerClient:
                 controller_conn.close()
                 break
 
-            time.sleep(self.__fetch_info_wait_time_sec)
+            time.sleep(time_to_wait)
 
     def create_queue(
         self, queue: str, partitions: int = 1, replication_factor: int = 1
