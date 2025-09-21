@@ -338,7 +338,7 @@ class Message:
     def __str__(self):
         key: str = self.key.decode() if self.key and len(self.key) > 0 else ""
         payload: str = self.payload.decode() if self.payload and len(self.payload) > 0 else ""
-        return f"Offset: {self.offset}, Timestamp: {self.timestamp}, Key: {key}, Payload: {payload}"
+        return f"Partition: {self.partition}, Offset: {self.offset}, Timestamp: {self.timestamp}, Key: {key}, Payload: {payload}"
 
 class ConsumeMessagesResponse:
     def __init__(self, res_bytes: bytes):
