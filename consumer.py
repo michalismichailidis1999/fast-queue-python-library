@@ -25,39 +25,37 @@ class Consumer(QueuePartitionsHandler):
 
         self.__auto_commits: Dict[int, int] = {}
 
-        self.__fetch_info_wait_time_sec: int = 15
+        while not self._all_partition_leaders_found():
+            self._retrieve_queue_partitions_info(10, 2, True)
 
-        while True:
+        while self.__get_consumer_id() <= 0:
             try:
-                self.__register_consumer(5, True)
+                self.__register_consumer(10, 2, True)
             except:
-                print("Consumer registration failed. Retrying again")
-            finally:
-                if self.__id > 0:
-                    print(f"Consumer registered with id {self.__id}")
-                    break
+                print("Consumer registration failed. Retrying again...")
+            
+            if self.__get_consumer_id() <= 0:
+                time.sleep(10)
 
-        self.__retrieve_assigned_partitions(5, True)
-
-        self._retrieve_queue_partitions_info(5, True)
-
-        t1 = threading.Thread(target=self._retrieve_queue_partitions_info, args=[1, False], daemon=True)
+        t1 = threading.Thread(target=self._retrieve_queue_partitions_info, args=[1, 15, False], daemon=True)
         t1.start()
 
-        t2 = threading.Thread(target=self.__retrieve_assigned_partitions, args=[1, False], daemon=True)
+        t2 = threading.Thread(target=self.__retrieve_assigned_partitions, args=[1, 15, False], daemon=True)
         t2.start()
 
-        t3 = threading.Thread(target=self.__register_consumer, args=[1, False], daemon=True)
+        t3 = threading.Thread(target=self.__register_consumer, args=[1, 15, False], daemon=True)
         t3.start()
 
         if self._conf.auto_commit:
             t4 = threading.Thread(target=self.__auto_commit, daemon=True)
             t4.start()
 
-    def __register_consumer(self, initial_retries: int = 3, called_from_constructor: bool = False):
+    def __register_consumer(self, initial_retries: int, time_to_wait: int, called_from_constructor: bool = False):
         while not self._stopped:
-            if self.__id > 0:
-                time.sleep(self.__fetch_info_wait_time_sec)
+            if self.__get_consumer_id() > 0:
+                if called_from_constructor: break
+
+                time.sleep(time_to_wait)
                 continue
 
             retries: int = initial_retries
@@ -84,23 +82,18 @@ class Consumer(QueuePartitionsHandler):
                         )
 
                         if not res.success or res.consumer_id <= 0:
-                            time.sleep(self.__fetch_info_wait_time_sec / 3)
+                            time.sleep(time_to_wait)
                             continue
 
-                        self.__lock.acquire_write()
-
-                        self.__id = res.consumer_id
-
-                        self.__lock.release_write()
+                        self.__set_consumer_id(res.consumer_id)
 
                         break
                     except Exception as e:
                         retries -= 1
 
-                        time.sleep(self.__fetch_info_wait_time_sec / 3)
-
-                        if retries <= 0:
-                            raise e
+                        if retries <= 0: raise e
+                        else:
+                            time.sleep(time_to_wait)
             except Exception as e:
                 if called_from_constructor: raise e
 
@@ -108,12 +101,12 @@ class Consumer(QueuePartitionsHandler):
             
             if called_from_constructor: break
 
-            time.sleep(self.__fetch_info_wait_time_sec)
+            time.sleep(time_to_wait)
 
-    def __retrieve_assigned_partitions(self, initial_retries: int = 3, called_from_constructor: bool = False):
+    def __retrieve_assigned_partitions(self, initial_retries: int, time_to_wait, called_from_constructor: bool = False):
         while not self._stopped:
-            if self.__get_consumer_id() <= 0:
-                time.sleep(self.__fetch_info_wait_time_sec)
+            if self.__get_consumer_id() <= 0 and not called_from_constructor:
+                time.sleep(time_to_wait)
                 continue
 
             retries: int = initial_retries
@@ -139,24 +132,20 @@ class Consumer(QueuePartitionsHandler):
                             )
                         )
 
-                        self.__lock.acquire_write()
-
-                        self.__assigned_partitions = res.assigned_partitions
-
-                        self.__lock.release_write()
+                        self.__set_assigned_partitions(res.assigned_partitions)
 
                         if len(res.assigned_partitions) == 0:
-                            time.sleep(self.__fetch_info_wait_time_sec / 3)
+                            retries -= 1
+                            time.sleep(time_to_wait)
                             continue
 
                         break
                     except Exception as e:
                         retries -= 1
 
-                        time.sleep(self.__fetch_info_wait_time_sec / 3)
-
-                        if retries <= 0:
-                            raise e
+                        if retries <= 0: raise e
+                        else:
+                            time.sleep(time_to_wait)
             except Exception as e:
                 if called_from_constructor: raise e
 
@@ -164,7 +153,7 @@ class Consumer(QueuePartitionsHandler):
 
             if called_from_constructor: break
 
-            time.sleep(self.__fetch_info_wait_time_sec)
+            time.sleep(time_to_wait)
 
     def poll_message(self, offset: int | None = None) -> Message | None:
         if self.__get_consumer_id() <= 0: return None
@@ -338,3 +327,26 @@ class Consumer(QueuePartitionsHandler):
 
     def __del__(self) -> None:
         self.close()
+
+    def __get_consumer_id(self) -> int:
+        self.__lock.acquire_read()
+
+        consumer_id: int = self.__id
+
+        self.__lock.release_read()
+
+        return consumer_id
+    
+    def __set_consumer_id(self, consumer_id: int) -> None:
+        self.__lock.acquire_write()
+
+        self.__id = consumer_id
+
+        self.__lock.release_write()
+    
+    def __set_assigned_partitions(self, assigned_partitions: List[int]) -> None:
+        self.__lock.acquire_write()
+
+        self.__assigned_partitions = assigned_partitions
+
+        self.__lock.release_write()

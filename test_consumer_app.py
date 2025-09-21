@@ -30,8 +30,11 @@ while True:
         messages = consumer.poll_messages()
 
         if messages is None:
+            print('here 1')
             time.sleep(2)
             continue
+
+        print('here 2')
 
         for message in messages:
             handle_message(message)
