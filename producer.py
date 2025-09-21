@@ -80,7 +80,6 @@ class Producer(QueuePartitionsHandler):
             f"Producer initialized for queue {self._conf.queue}"
         )
 
-    # TODO: Check function's response time
     def produce(
         self,
         message: str,

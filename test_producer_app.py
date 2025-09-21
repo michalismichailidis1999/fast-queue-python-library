@@ -9,16 +9,15 @@ def on_delivery_callback(message: bytes, key: bytes | None, exception: Exception
     else:
         print(f"Message `{(message.decode())}` produced successfully")
 
-
 broker_conf = BrokerClientConf()
 
 client = BrokerClient(conf=broker_conf, controller_node=["127.0.0.1", 9877])
 
-queue_name = input("Enter the queue you want to produce messages to: ")
+queue_name = "test"
 
 client.create_queue(queue=queue_name, partitions=5, replication_factor=1)
 
-producer_conf = ProducerConf(queue=queue_name)
+producer_conf = ProducerConf(queue=queue_name, wait_ms=5000, max_batch_size=(16384 * 4))
 
 producer = Producer(client=client, conf=producer_conf, on_delivery_callback=on_delivery_callback)
 
