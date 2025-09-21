@@ -20,11 +20,9 @@ class QueuePartitionsHandler:
         self._partition_clients: Dict[int, SocketClient | None] = {} # (Node Id - SocketClient) Pair
         self._partitions_nodes: Dict[int, int] = {} # (Partition Id - Node Id) Pair
 
-        self.__fetch_info_wait_time_sec: int = 15
-
         self._stopped: bool = False
 
-    def _retrieve_queue_partitions_info(self, retries: int = 1, called_from_contructor: bool = False):
+    def _retrieve_queue_partitions_info(self, retries: int , time_to_wait: int, called_from_contructor: bool = False):
         initial_retries: int = retries
         success: bool = False
 
@@ -82,7 +80,7 @@ class QueuePartitionsHandler:
                             
                     retries -= 1
 
-                    if len(list(filter(lambda x: x is not None, self._partitions_nodes.items()))) == self._total_partitions:
+                    if self._all_partition_leaders_found():
                         success = True
                         break
                 except Exception as e:
@@ -93,11 +91,11 @@ class QueuePartitionsHandler:
                     
                     print(f"Error occured while trying to retrieve queue's {self._conf.queue} partitions info. {e}")
                 finally:
-                    if retries > 0 and not success: time.sleep(self.__fetch_info_wait_time_sec)
+                    if retries > 0 and not success: time.sleep(time_to_wait)
 
             if called_from_contructor: return
 
-            time.sleep(self.__fetch_info_wait_time_sec)
+            time.sleep(time_to_wait)
 
     def _get_leader_node_socket_client(self, partition_id: int) -> SocketClient | None:
         self._partitions_lock.acquire_read()
@@ -171,3 +169,12 @@ class QueuePartitionsHandler:
             print(f"Error occured while trying to remove unused node connection. {e}")
         finally:
             self._partitions_lock.release_write()
+
+    def _all_partition_leaders_found(self) -> bool:
+        self._partitions_lock.acquire_read()
+
+        all_leaders_found = len(list(filter(lambda x: x[1] is not None, self._partition_clients.items()))) == self._total_partitions
+
+        self._partitions_lock.release_read()
+
+        return all_leaders_found

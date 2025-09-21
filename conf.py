@@ -58,7 +58,7 @@ class BrokerClientConf(SocketClientConf):
         username: str = None,
         password: str = None,
         max_pool_connections: int = 10,
-        connections_ping_time_ms: int = 15000
+        connections_ping_time_ms: int = 30000
     ) -> None:
         super().__init__(
             timeoutms=timeoutms,

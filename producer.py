@@ -66,9 +66,10 @@ class Producer(QueuePartitionsHandler):
         self.__can_flush: bool = True
         self.__flush_lock: ReadWriteLock = ReadWriteLock()
 
-        self._retrieve_queue_partitions_info(5, True)
+        while not self._all_partition_leaders_found():
+            self._retrieve_queue_partitions_info(10, 2, True)
 
-        t1 = threading.Thread(target=self._retrieve_queue_partitions_info, args=[1, False], daemon=True)
+        t1 = threading.Thread(target=self._retrieve_queue_partitions_info, args=[1, 15, False], daemon=True)
         t1.start()
 
         if self._conf.wait_ms > 0:
