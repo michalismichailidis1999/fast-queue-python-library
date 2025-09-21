@@ -9,13 +9,11 @@ broker_conf = BrokerClientConf()
 
 client = BrokerClient(conf=broker_conf, controller_node=["127.0.0.1", 9877])
 
-queue_name = input("Enter the queue you want to consume messages from: ")
+queue_name = "test"
 
-client.create_queue(queue=queue_name, partitions=1, replication_factor=1)
+client.create_queue(queue=queue_name, partitions=5, replication_factor=1)
 
-group_id = input("Enter a group id you want to use for your consumer: ")
-
-consumer_conf = ConsumerConf(queue=queue_name, group_id=group_id, consume_from=CONSUME_EARLIEST, auto_commit=True, auto_commit_interval_ms=5000)
+consumer_conf = ConsumerConf(queue=queue_name, group_id="test", consume_from=CONSUME_EARLIEST, auto_commit=True, auto_commit_interval_ms=5000)
 
 consumer = Consumer(client=client, conf=consumer_conf)
 
