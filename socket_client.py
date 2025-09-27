@@ -55,7 +55,7 @@ class SocketConnection:
         return False
     
 class ConnectionPool:
-    def __init__(self, address:str, port: int, conf: SocketClientConf, max_pool_connections: int):
+    def __init__(self, address:str, port: int, conf: SocketClientConf, max_pool_connections: int, raise_on_conn_init: bool):
         self.__pool: Queue[SocketConnection] = Queue()
         self.__address: str = address
         self.__port: int = port
@@ -72,7 +72,11 @@ class ConnectionPool:
         self.__ping_total_bytes = 9
         self.__ping_bytes: bytes = self.__ping_total_bytes.to_bytes(length=INT_SIZE, byteorder=ENDIAS) + PING.to_bytes(length=INT_SIZE, byteorder=ENDIAS) + True.to_bytes(length=BOOL_SIZE, byteorder=ENDIAS)
 
-        self.__add_connection(address=address, port=port)
+        try:
+            self.__add_connection(address=address, port=port)
+        except Exception as e:
+            if raise_on_conn_init:
+                raise e
 
         t = threading.Thread(target=self.__keep_pool_connections_to_maximum, daemon=True)
         t.start()
@@ -90,6 +94,8 @@ class ConnectionPool:
         return count
     
     def get_connection(self, no_wait: bool = False) -> SocketConnection | None:
+        if self.get_connections_count() == 0: return None
+
         conn: SocketConnection | None = None
 
         try:
@@ -226,7 +232,7 @@ class ConnectionPool:
 
 class SocketClient:
 
-    def __init__(self, address: str, port: int, conf: SocketClientConf, max_pool_connections: int = -1) -> None:
+    def __init__(self, address: str, port: int, conf: SocketClientConf, max_pool_connections: int = -1, raise_on_conn_init: bool = True) -> None:
         self.__address: str = address
         self.__port: int = port
         self.__conf = conf
@@ -236,6 +242,7 @@ class SocketClient:
             port=port,
             conf=conf,
             max_pool_connections=(max_pool_connections if max_pool_connections > 0 else conf._max_pool_connections),
+            raise_on_conn_init=raise_on_conn_init
         )
 
     def get_connection_info(self) -> Tuple[str, int]:

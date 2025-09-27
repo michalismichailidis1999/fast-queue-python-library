@@ -34,20 +34,47 @@ class BrokerClient:
 
         self.__stopped: bool = False
 
+        self.__get_leader_quorum_connection_infos(controller_node)
+
         # initialize the leader
         while self.__leader_node_id <= 0:
             self.__check_for_leader_update(controller_node=controller_node, retries=10, time_to_wait=2, called_from_contructor=True)
 
-        print(
-            f"Connected successfully to controller quorum leader {self.__leader_node_id}"
-        )
+        print(f"Connected successfully to controller quorum leader {self.__leader_node_id}")
 
         # check periodically for leader change
         t = threading.Thread(target=self.__check_for_leader_update, daemon=True, args=[controller_node, 1, 15, False])
         t.start()
 
+    def __get_leader_quorum_connection_infos(self, controller_node: Tuple[str, int]) -> None:
+        controller_conn: SocketClient = SocketClient(address=controller_node[0], port=controller_node[1], conf=self._conf, max_pool_connections=1)
+
+        try:
+            res = GetControllersConnectionInfoResponse(
+                controller_conn.send_request(
+                    self._create_request(GET_CONTROLLERS_CONNECTION_INFO, None, False)
+                )
+            )
+
+            for controller in res.controller_nodes:
+                self.__init_controller_node_socket_client(
+                    node_id=controller.node_id, 
+                    new_address=controller.address, 
+                    new_port=controller.port,
+                )
+
+            if res.leader_id in self.__controller_nodes:
+                self.__leader_node_id = res.leader_id
+
+            print("Initialized controller nodes connection info:")
+
+            for node in res.controller_nodes:
+                print(node)
+        except Exception as e:
+            raise Exception(f"Reason: {e}")
+
     def __check_for_leader_update(self, controller_node: Tuple[str, int], retries: int, time_to_wait: int, called_from_contructor: bool = False):
-        controller_conn: SocketClient = SocketClient(address=controller_node[0], port=controller_node[1], conf=self._conf, max_pool_connections=2)
+        controller_conn: SocketClient = SocketClient(address=controller_node[0], port=controller_node[1], conf=self._conf, max_pool_connections=1)
 
         initial_retries: int = retries
 
@@ -59,70 +86,33 @@ class BrokerClient:
 
             while retries > 0:
                 try:
-                    res = GetControllersConnectionInfoResponse(
-                        controller_conn.send_request(
-                            self._create_request(GET_CONTROLLERS_CONNECTION_INFO, None, False)
-                        )
-                    )
-
-                    to_keep = set()
-
-                    for controller in res.controller_nodes:
-                        to_keep.add(controller.node_id)
-
-                        conn_info: Tuple[str, int] | None = self.__get_controller_node_conenction_info(controller.node_id)
-
-                        if conn_info is not None and conn_info[0] == controller.address and conn_info[1] == controller.port:
-                            continue
-                        
-                        self.__replace_controller_node_socket_client(
-                            node_id=controller.node_id, 
-                            new_address=controller.address, 
-                            new_port=controller.port,
-                        )
-
-                    self.__remove_unused_controller_nodes(to_keep)
-
-                    if called_from_contructor:
-                        print("Initialized controller nodes connection info:")
-
-                        for node in res.controller_nodes:
-                            print(node)
-
-                    if res.leader_id in self.__controller_nodes:
-                        self.__leader_node_id = res.leader_id
-                        retries -= 1
-                        success = True
-                        break
-
-                    leader_res = GetLeaderControllerIdResponse(
+                    res = GetLeaderControllerIdResponse(
                         controller_conn.send_request(
                             self._create_request(GET_CONTROLLER_LEADER_ID, None, False)
                         )
                     )
 
-                    res.leader_id = leader_res.leader_id
-
-                    retries -= 1
-
                     if res.leader_id in self.__controller_nodes:
+                        self.__set_leader_id(res.leader_id)
                         success = True
                         break
+                    
+                    retries -= 1
                 except Exception as e:
                     retries -= 1
 
                     if retries <= 0:
                         if called_from_contructor:
                             controller_conn.close()
-                            raise Exception(f"Error occured while trying to fetch leader controller update. {e}")
+                            raise Exception(f"Error occured while trying to get quorum leader node. {e}")
                         else:
-                            print(f"Error occured while trying to fetch leader controller update. {e}")
+                            print(f"Error occured while trying to get quorum leader node. {e}")
                 finally:
                     if retries > 0 and not success: time.sleep(time_to_wait)
 
             if called_from_contructor:
                 controller_conn.close()
-                if self.__leader_node_id not in self.__controller_nodes: raise Exception("Could not connect to leader node")
+                if self.__leader_node_id not in self.__controller_nodes: raise Exception("Could not get quorum leader node")
                 return
             
             if self.__stopped:
@@ -299,12 +289,12 @@ class BrokerClient:
 
         return socket_client
     
-    def __replace_controller_node_socket_client(self, node_id: int, new_address: str, new_port: int):
+    def __init_controller_node_socket_client(self, node_id: int, new_address: str, new_port: int):
         self.__lock.acquire_write()
 
         try:
             if node_id in self.__controller_nodes: del self.__controller_nodes[node_id]
-            self.__controller_nodes[node_id] = SocketClient(address=new_address, port=new_port, conf=self._conf)
+            self.__controller_nodes[node_id] = SocketClient(address=new_address, port=new_port, conf=self._conf, raise_on_conn_init=False)
         except Exception as e:
             print(f"Error occured while trying to connect to controlelr node {node_id}. {e}")
         finally:
@@ -322,18 +312,12 @@ class BrokerClient:
 
         return conn_info
     
-    def __remove_unused_controller_nodes(self, to_keep: Set[int]):
+    def __set_leader_id(self, leader_id: int) -> None:
         self.__lock.acquire_write()
 
-        try:
-            node_ids = list(self.__controller_nodes.keys())
-            for node_id in node_ids:
-                if node_id not in to_keep:
-                    del self.__controller_nodes[node_id]
-        except Exception as e:
-            print(f"Error occured while trying to remove unused node connection. {e}")
-        finally:
-            self.__lock.release_write()
+        self.__leader_node_id = leader_id
+
+        self.__lock.release_write()
 
     def __get_val_bytes(self, val: Any) -> int:
         if isinstance(val, bool):
