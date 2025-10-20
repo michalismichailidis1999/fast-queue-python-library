@@ -5,6 +5,8 @@ from conf import ConsumerConf
 from constants import *
 from responses import Message
 
+# Test comment
+
 broker_conf = BrokerClientConf()
 
 client = BrokerClient(conf=broker_conf, controller_node=["127.0.0.1", 9877])
