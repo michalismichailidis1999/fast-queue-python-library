@@ -69,7 +69,7 @@ class ConnectionPool:
 
         self.__stopped: bool = False
 
-        self.__ping_total_bytes = 9
+        self.__ping_total_bytes = 5 # 4 bytes for PING req type & 1 byte for True value at the end
         self.__ping_bytes: bytes = self.__ping_total_bytes.to_bytes(length=INT_SIZE, byteorder=ENDIAS) + PING.to_bytes(length=INT_SIZE, byteorder=ENDIAS) + True.to_bytes(length=BOOL_SIZE, byteorder=ENDIAS)
 
         try:
