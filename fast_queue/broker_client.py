@@ -33,6 +33,7 @@ class BrokerClient:
         self._conf: BrokerClientConf = conf
 
         self.__stopped: bool = False
+        self.__closed: bool = False
 
         self.__get_leader_quorum_connection_infos(controller_node)
 
@@ -201,15 +202,20 @@ class BrokerClient:
             for reqValKey, val, val_bytes in values:
                 total_bytes += INT_SIZE
 
-                if val != None and reqValKey != MESSAGES:
-                    total_bytes += self.__get_val_bytes(val=val) if val_bytes is None else val_bytes
-                elif val != None and reqValKey == MESSAGES:
+                if val != None and reqValKey == MESSAGES:
                     total_bytes += INT_SIZE
                     
                     for message, key in val:
-                        message_bytes = 2 * INT_SIZE + len(message) + (len(key) if key is not None else 0)
+                        message_bytes = LONG_LONG_SIZE + 2 * INT_SIZE + len(message) + (len(key) if key is not None else 0)
                         total_bytes += message_bytes
                         messages_total_bytes += message_bytes
+                elif val != None and reqValKey == REGISTERED_QUEUES:
+                    total_bytes += INT_SIZE
+
+                    for queue in val:
+                        total_bytes += INT_SIZE + len(queue)
+                elif val != None:
+                    total_bytes += self.__get_val_bytes(val=val) if val_bytes is None else val_bytes
 
         req_bytes = bytearray(total_bytes)
 
@@ -225,18 +231,17 @@ class BrokerClient:
                 req_bytes[pos:(pos + INT_SIZE)] = self.__val_to_bytes(reqValKey)
                 pos += INT_SIZE
                 
-                if val != None and reqValKey != MESSAGES:
-                    val_bytes = self.__get_val_bytes(val) if val_bytes_size is None else val_bytes_size
-
-                    req_bytes[pos:(pos + val_bytes)] = self.__val_to_bytes(val, val_bytes_size)
-                    pos += val_bytes
-                elif val != None and reqValKey == MESSAGES:
+                
+                if val != None and reqValKey == MESSAGES:
                     req_bytes[pos:(pos + INT_SIZE)] = self.__val_to_bytes(messages_total_bytes)
                     pos += INT_SIZE
 
-                    for message, key in val:
+                    for message, key, transaction_id in val:
                         key_len = len(key) if key is not None else 0
                         message_len = len(message)
+
+                        req_bytes[pos:(pos + LONG_LONG_SIZE)] = self.__val_to_bytes(transaction_id, LONG_LONG_SIZE)
+                        pos += LONG_LONG_SIZE
 
                         req_bytes[pos:(pos + INT_SIZE)] = self.__val_to_bytes(key_len)
                         pos += INT_SIZE
@@ -250,6 +255,19 @@ class BrokerClient:
 
                         req_bytes[pos:(pos + message_len)] = message
                         pos += message_len
+                elif val != None and reqValKey == REGISTERED_QUEUES:
+                    req_bytes[pos:(pos + INT_SIZE)] = self.__val_to_bytes(len(val))
+                    pos += INT_SIZE
+
+                    for queue in val:
+                        queue_bytes = INT_SIZE + len(queue)
+                        req_bytes[pos:(pos + queue_bytes)] = self.__val_to_bytes(queue)
+                        pos += queue_bytes
+                elif val != None:
+                    val_bytes = self.__get_val_bytes(val) if val_bytes_size is None else val_bytes_size
+
+                    req_bytes[pos:(pos + val_bytes)] = self.__val_to_bytes(val, val_bytes_size)
+                    pos += val_bytes
 
         if self._conf._authentication_enable and request_needs_authentication:
             req_bytes[pos:(pos + INT_SIZE)] = self.__val_to_bytes(USERNAME)
@@ -272,18 +290,32 @@ class BrokerClient:
 
         self.__lock.acquire_write()
 
+        if self.__closed:
+            self.__lock.release_write()
+            return
+
         try:
             for node_socket_client in self.__controller_nodes.values():
                 node_socket_client.close()
         except Exception as e:
             print(f"Error occured while closing client. {e}")
         finally:
+            self.__closed = True
             self.__lock.release_write()
 
     def _get_leader_node_socket_client(self) -> SocketClient | None:
         self.__lock.acquire_read()
 
         socket_client = self.__controller_nodes[self.__leader_node_id] if self.__leader_node_id in self.__controller_nodes else None
+
+        self.__lock.release_read()
+
+        return socket_client
+    
+    def _get_node_socket_client(self, node_id: int) -> SocketClient | None:
+        self.__lock.acquire_read()
+
+        socket_client = self.__controller_nodes[self.node_id] if self.node_id in self.__controller_nodes else None
 
         self.__lock.release_read()
 

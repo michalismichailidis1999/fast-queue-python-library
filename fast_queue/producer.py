@@ -13,13 +13,13 @@ from .queue_partitions_handler import QueuePartitionsHandler
 
 class PartitionMessagesDoubleBuffer:
     def __init__(self):
-        self.__messages: list[Dict[int, list[Tuple[bytes, bytes | None]]]] = [{}, {}]
+        self.__messages: list[Dict[int, list[Tuple[bytes, bytes | None, int]]]] = [{}, {}]
         self.__write_pos: int = 0
         self.__read_pos: int = 1
         self.write_lock: ReadWriteLock = ReadWriteLock()
         self.read_lock: ReadWriteLock = ReadWriteLock()
 
-    def append_partition_message(self, partition: int, message: Tuple[bytes, bytes | None]):
+    def append_partition_message(self, partition: int, message: Tuple[bytes, bytes | None, int]):
         buff = self.__messages[self.__write_pos]
 
         if partition not in buff:
@@ -27,7 +27,7 @@ class PartitionMessagesDoubleBuffer:
 
         buff[partition].append(message)
 
-    def read_partition_messages(self, partition: int) -> Generator[Tuple[bytes, bytes | None], None, None]:
+    def read_partition_messages(self, partition: int) -> Generator[Tuple[bytes, bytes | None, int], None, None]:
         if partition in self.__messages[self.__read_pos]:
             for message_key_pair in self.__messages[self.__read_pos][partition]:
                 yield message_key_pair
@@ -66,6 +66,8 @@ class Producer(QueuePartitionsHandler):
         self.__can_flush: bool = True
         self.__flush_lock: ReadWriteLock = ReadWriteLock()
 
+        self.__transaction_group_id_retrieval_cb: Callable[[], int] | None = None
+
         while not self._all_partition_leaders_found():
             self._retrieve_queue_partitions_info(10, 2, True)
 
@@ -84,6 +86,7 @@ class Producer(QueuePartitionsHandler):
         self,
         message: str,
         key: str = None,
+        transaction_id: int = 0
     ) -> None:
         if message is None or message == "":
             raise ValueError("Message was empty")
@@ -94,7 +97,7 @@ class Producer(QueuePartitionsHandler):
         ex: Exception | None = None
 
         try:
-            self.__produce(message=message.encode(), key=(key.encode() if key is not None and key != "" else None))
+            self.__produce(message=message.encode(), key=(key.encode() if key is not None and key != "" else None), transaction_id=transaction_id)
         except Exception as e:
             ex = e
         finally:
@@ -107,6 +110,7 @@ class Producer(QueuePartitionsHandler):
         self,
         message: bytes,
         key: bytes | None,
+        transaction_id: int = 0
     ) -> None:
         if message == None or len(message) == 0:
             raise ValueError("Message was empty")
@@ -118,7 +122,7 @@ class Producer(QueuePartitionsHandler):
             raise Exception(f"Leader for partition {partition} has not been elected yet")
 
         self.__messages.write_lock.acquire_write()
-        self.__messages.append_partition_message(partition=partition, message=(message, key))
+        self.__messages.append_partition_message(partition=partition, message=(message, key, transaction_id))
         self.__messages.write_lock.release_write()
 
         total_cached_bytes = self.__increment_cached_bytes(len(message))
@@ -176,10 +180,10 @@ class Producer(QueuePartitionsHandler):
             
             remaining_bytes: int = self._conf.max_produce_request_bytes
 
-            to_send = []
+            to_send: list[Tuple[bytes, bytes | None, int]] = []
 
-            for message, key in self.__messages.read_partition_messages(partition=partition):
-                if remaining_bytes - len(message) - (len(key) if key is not None else 0) < 0:
+            for message, key, transaction_id in self.__messages.read_partition_messages(partition=partition):
+                if remaining_bytes - len(message) - (len(key) if key is not None else 0) - LONG_LONG_SIZE < 0:
                     self.__send_messages_to_partition_leader(
                         partition_client=partition_client, 
                         partition=partition, 
@@ -189,8 +193,8 @@ class Producer(QueuePartitionsHandler):
                     remaining_bytes: int = self._conf.max_produce_request_bytes
                     to_send.clear()
                 else: 
-                    to_send.append((message, key))
-                    remaining_bytes -= (len(message) + (len(key) if key is not None else 0))
+                    to_send.append((message, key, transaction_id))
+                    remaining_bytes -= (len(message) + (len(key) if key is not None else 0) + LONG_LONG_SIZE)
 
             if len(to_send) > 0:
                 self.__send_messages_to_partition_leader(
@@ -203,8 +207,16 @@ class Producer(QueuePartitionsHandler):
         except Exception as e:
             raise e
         
-    def __send_messages_to_partition_leader(self, partition_client: SocketClient, partition: int, messages: list[Tuple[bytes, bytes | None]]):
+    def __send_messages_to_partition_leader(self, partition_client: SocketClient, partition: int, messages: list[Tuple[bytes, bytes | None, int]]):
         partition_ex: Exception | None = None
+
+        transaction_group_id: int = 0
+
+        if self.__transaction_group_id_retrieval_cb is not None:
+            transaction_group_id = self.__transaction_group_id_retrieval_cb()
+
+            if transaction_group_id <= 0:
+                raise Exception(f"Cannot flush partition's {partition} messages. Invalid transaction group id {transaction_group_id}")
 
         try:
             ProduceMessagesResponse(
@@ -214,6 +226,7 @@ class Producer(QueuePartitionsHandler):
                         [
                             (QUEUE_NAME, self._conf.queue, None),
                             (PARTITION, partition, None),
+                            (TRANSACTION_GROUP_ID, transaction_group_id, LONG_LONG_SIZE),
                             (MESSAGES, messages, None)
                         ]
                     )
@@ -278,3 +291,6 @@ class Producer(QueuePartitionsHandler):
 
     def __del__(self):
         self.close()
+
+    def _set_transaction_group_id_retrieval_cb(self, cb: Callable[[], int]) -> None:
+        self.__transaction_group_id_retrieval_cb = cb

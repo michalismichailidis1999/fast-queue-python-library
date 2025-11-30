@@ -82,8 +82,7 @@ class Consumer(QueuePartitionsHandler):
                         )
 
                         if not res.success or res.consumer_id <= 0:
-                            time.sleep(time_to_wait)
-                            continue
+                            raise Exception("Unsuccessfull consumer registration")
 
                         self.__set_consumer_id(res.consumer_id)
 

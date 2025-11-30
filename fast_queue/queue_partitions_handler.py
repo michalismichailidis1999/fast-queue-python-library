@@ -9,6 +9,9 @@ from .constants import *
 
 class QueuePartitionsHandler:
     def __init__(self, client: BrokerClient, producer_conf: ProducerConf | None = None, consumer_conf: ConsumerConf | None = None):
+        if client is None:
+            raise ValueError("client cannot be None")
+        
         if (producer_conf is None and consumer_conf is None) or (producer_conf is not None and consumer_conf is not None):
             raise ValueError("Passed configuration must be either for producer or consumer")
         

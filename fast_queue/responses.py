@@ -205,6 +205,22 @@ def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):
                 field_values["messages"].append(message)
 
                 offset += nessage_bytes
+        elif res_key == RES_VAL_TRANSACTION_GROUP_ID:
+            field_values["transaction_group_id"] = int.from_bytes(
+                bytes=res_bytes[offset : (offset + LONG_LONG_SIZE)],
+                byteorder=ENDIAS,
+                signed=False,
+            )
+
+            offset += LONG_LONG_SIZE
+        elif res_key == RES_VAL_TRANSACTION_ID:
+            field_values["transaction_id"] = int.from_bytes(
+                bytes=res_bytes[offset : (offset + LONG_LONG_SIZE)],
+                byteorder=ENDIAS,
+                signed=False,
+            )
+
+            offset += LONG_LONG_SIZE
 
     return field_values
 
@@ -356,3 +372,22 @@ class ConsumeMessagesResponse:
                 )
                 for message in res_fields["messages"]
             ]
+
+class RegisterTransactionGroupResponse:
+    def __init__(self, res_bytes: bytes):
+        res_fields = _response_fields_mapper(res_bytes, set([RES_VAL_LEADER_ID, RES_VAL_TRANSACTION_GROUP_ID]))
+
+        self.leader_id: int = res_fields["leader_id"] if "leader_id" in res_fields else -1
+        self.transaction_group_id: int = res_fields["transaction_group_id"] if "transaction_group_id" in res_fields else 0
+
+class BeginTransactionResponse:
+    def __init__(self, res_bytes: bytes):
+        res_fields = _response_fields_mapper(res_bytes, set([RES_VAL_TRANSACTION_ID]))
+
+        self.transaction_id: int = res_fields["transaction_id"] if "transaction_id" in res_fields else 0
+
+class FinalizeTransactionResponse:
+    def __init__(self, res_bytes: bytes):
+        res_fields = _response_fields_mapper(res_bytes, set([RES_VAL_OK]))
+
+        self.success: bool = res_fields["success"] if "success" in res_fields else False
