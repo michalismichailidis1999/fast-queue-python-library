@@ -4,3 +4,4 @@ from .consumer import Consumer
 from .conf import ProducerConf, ConsumerConf
 from .constants import CONSUME_EARLIEST
 from .responses import Message
+from .transactional_producer import TransactionalProducer
