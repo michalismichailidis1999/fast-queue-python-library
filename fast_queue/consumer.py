@@ -1,5 +1,6 @@
 import threading
 from typing import Dict, List, Set
+from queue import Queue
 from .exceptions import FastQueueException
 from .lock import ReadWriteLock
 from .queue_partitions_handler import QueuePartitionsHandler
@@ -25,6 +26,11 @@ class Consumer(QueuePartitionsHandler):
 
         self.__auto_commits: Dict[int, int] = {}
 
+        self.__consume_condition_lock: threading.Condition = threading.Condition(threading.Lock())
+        self.__messages_for_consumption: Queue[Message] = Queue()
+        self.__total_consumed_messages: int = 0
+        self.__total_consumed_messages_bytes: int = 0
+
         while not self._all_partition_leaders_found():
             self._retrieve_queue_partitions_info(10, 2, True)
 
@@ -49,6 +55,9 @@ class Consumer(QueuePartitionsHandler):
         if self._conf.auto_commit:
             t4 = threading.Thread(target=self.__auto_commit, daemon=True)
             t4.start()
+
+        t5 = threading.Thread(target=self.__retrieve_messages_from_all_assigned_partitions, daemon=True)
+        t5.start()
 
     def __register_consumer(self, initial_retries: int, time_to_wait: int, called_from_constructor: bool = False):
         while not self._stopped:
@@ -154,76 +163,39 @@ class Consumer(QueuePartitionsHandler):
 
             time.sleep(time_to_wait)
 
-    def poll_message(self, offset: int | None = None) -> Message | None:
-        if self.__get_consumer_id() <= 0: return None
+    def poll(self, timeout: int = 2, max_messages_to_receive: int = 50) -> List[Message] | None:
+        with self.__consume_condition_lock:
+            self.__consume_condition_lock.wait_for(predicate=lambda: self.__messages_for_consumption.qsize() == 0, timeout=timeout)
 
-        try:
-            messages: List[Message] | None = self.__poll_messages(offset=offset, only_one=True)
+            messages: List[Message] = []
 
-            return messages[0] if messages is not None and len(messages) > 0 else None
-        except FastQueueException as e:
-            if e.error_code == CONSUMER_UNREGISTERED:
-                self.__reset_consumer()
-            return None
-        except:
-            return None
-    
-    def poll_messages(self, offset: int | None = None) -> List[Message] | None:
-        if self.__get_consumer_id() <= 0: return None
+            while max_messages_to_receive > 0 and self.__messages_for_consumption.qsize() > 0:
+                message: Message | None = None
 
-        try:
-            return self.__poll_messages(offset=offset)
-        except FastQueueException as e:
-            if e.error_code == CONSUMER_UNREGISTERED:
-                self.__reset_consumer()
-            return None
-        except:
-            return None
+                try:
+                    message = self.__messages_for_consumption.get()
+                except:
+                    message = None
+                
+                if message is not None:
+                    messages.append(message)
+                else:
+                    break
 
-    def __poll_messages(self, offset: int | None = None, only_one: bool = False) -> List[Message] | None:
-        partition_index_to_fetch: int = -1
-        partition_client: SocketClient | None = None
+            return messages if len(messages) > 0 else None
+        
+    def fetch_messages_from(self, partition: int, offset: int) -> List[Message] | None:
+        return self.__fetch_messages_from(partition=partition, offset=offset, single_message=False)
 
-        total_assigned_partitions: int = self.__get_total_assigned_partitions()
+    def fetch_message_from(self, partition: int, offset: int) -> Message | None:
+        messages = self.__fetch_messages_from(partition=partition, offset=offset, single_message=True)
 
-        for i in range(total_assigned_partitions):
-            partition_index_to_fetch = self.__get_partition_to_poll_from()
+        if not messages: return None
 
-            if partition_index_to_fetch == -1: return None
+        return messages[0]
 
-            partition_client = self._get_leader_node_socket_client(partition_id=partition_index_to_fetch)
-
-            if partition_client is not None: break
-
-        if partition_client is None: return None
-
-        messages = ConsumeMessagesResponse(
-            partition_client.send_request(
-                self._client._create_request(
-                    CONSUME,
-                    [
-                        (QUEUE_NAME, self._conf.queue, None),
-                        (CONSUMER_GROUP_ID, self._conf.group_id, None),
-                        (CONSUMER_ID, self.__get_consumer_id(), LONG_LONG_SIZE),
-                        (PARTITION, partition_index_to_fetch, None),
-                        (MESSAGE_OFFSET, offset if offset else 0, LONG_LONG_SIZE),
-                        (READ_SINGLE_OFFSET_ONLY, only_one, None)
-                    ]
-                )
-            )
-        ).messages
-
-        if messages:
-            if self._conf.auto_commit: self.__auto_commit_lock.acquire_write()
-
-            for message in messages:
-                message.partition = partition_index_to_fetch
-                if self._conf.auto_commit:
-                    self.__auto_commits[message.partition] = message.offset
-
-            if self._conf.auto_commit: self.__auto_commit_lock.release_write()
-
-        return messages
+    def __fetch_messages_from(self, partition: int, offset: int, single_message: bool = False) -> List[Message] | None:
+        return self.__consume_messages_from_node(partition=partition, offset=offset, single_message=single_message)
         
     def ack(self, offset: int, partition: int) -> None:
         if self.__get_consumer_id() <= 0: return None
@@ -349,3 +321,83 @@ class Consumer(QueuePartitionsHandler):
         self.__assigned_partitions = assigned_partitions
 
         self.__lock.release_write()
+
+    def __retrieve_messages_from_all_assigned_partitions(self):
+        while not self._stopped:
+            self.__lock.acquire_read()
+            first_skipped_partition = -1
+
+            try:
+                for partition in self.__assigned_partitions:
+                    if self._conf.max_queued_messages > 0 and self.__total_consumed_messages >= self._conf.max_queued_messages:
+                        first_skipped_partition = partition if first_skipped_partition == -1 else first_skipped_partition
+                        continue
+
+                    if self._conf.max_queued_messages_bytes > 0 and self.__total_consumed_messages_bytes >= self._conf.max_queued_messages_bytes:
+                        first_skipped_partition = partition if first_skipped_partition == -1 else first_skipped_partition
+                        continue
+
+                    messages = self.__consume_messages_from_node(partition=partition, offset=0, single_message=False)
+
+                    if messages:
+                        if self._conf.auto_commit: self.__auto_commit_lock.acquire_write()
+
+                        for message in messages:
+                            message.partition = partition
+
+                            self.__messages_for_consumption.put(message)
+                            self.__total_consumed_messages += 1
+                            self.__total_consumed_messages_bytes += message.get_message_total_bytes()
+
+                            if self._conf.auto_commit:
+                                self.__auto_commits[message.partition] = message.offset
+
+                        if self._conf.auto_commit: self.__auto_commit_lock.release_write()
+
+                        self.__consume_condition_lock.notify_all()
+            except Exception as e:
+                print(f"Failed to retrieve messages from assigned partitions. Reason: {e}")
+            finally:
+                self.__lock.release_read()
+
+            if first_skipped_partition != -1:
+                self.__lock.acquire_write()
+
+                index_to_rotate = 0
+
+                for i in range(len(self.__assigned_partitions)):
+                    if self.__assigned_partitions[i] == first_skipped_partition:
+                        index_to_rotate = i
+                        break
+                
+                if index_to_rotate > 0:
+                    part_a = self.__assigned_partitions[index_to_rotate:]
+                    part_b = self.__assigned_partitions[:index_to_rotate]
+
+                    self.__assigned_partitions = part_a + part_b
+
+                self.__lock.release_write()
+            
+            time.sleep(self._conf.poll_frequency_ms / 1000)
+
+    def __consume_messages_from_node(self, partition: int, offset: int, single_message: bool) -> List[Message] | None:
+        partition_client = self._get_leader_node_socket_client(partition_id=partition)
+
+        if partition_client is None:
+            return None
+
+        return ConsumeMessagesResponse(
+            partition_client.send_request(
+                self._client._create_request(
+                    CONSUME,
+                    [
+                        (QUEUE_NAME, self._conf.queue, None),
+                        (CONSUMER_GROUP_ID, self._conf.group_id, None),
+                        (CONSUMER_ID, self.__get_consumer_id(), LONG_LONG_SIZE),
+                        (PARTITION, partition, None),
+                        (MESSAGE_OFFSET, offset, LONG_LONG_SIZE),
+                        (READ_SINGLE_OFFSET_ONLY, single_message, None)
+                    ]
+                )
+            )
+        ).messages

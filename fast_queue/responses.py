@@ -351,6 +351,11 @@ class Message:
         self.timestamp: int = timestamp
         self.partition: int = -1
 
+        self.__total_bytes: int = len(payload) + LONG_LONG_SIZE * 2 + INT_SIZE + (0 if key is None else len(key))
+
+    def get_message_total_bytes(self) -> int:
+        return self.__total_bytes
+
     def __str__(self):
         key: str = self.key.decode() if self.key and len(self.key) > 0 else ""
         payload: str = self.payload.decode() if self.payload and len(self.payload) > 0 else ""

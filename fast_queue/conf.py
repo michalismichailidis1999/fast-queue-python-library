@@ -119,7 +119,7 @@ class ConsumerConf(CommonConf):
     :raise ValueError: If invalid argument is passed.
     """
 
-    def __init__(self, queue: str, group_id: str | None = None, consume_from:str = CONSUME_LATEST, auto_commit: bool = True, auto_commit_interval_ms: int = 3000):
+    def __init__(self, queue: str, group_id: str | None = None, consume_from:str = CONSUME_LATEST, auto_commit: bool = True, auto_commit_interval_ms: int = 3000, poll_frequency_ms: int = 5000, max_queued_messages: int = 0, max_queued_messages_bytes: int = 0):
         if queue is None or queue == "":
             raise ValueError("queue cannot be empty")
         
@@ -130,7 +130,16 @@ class ConsumerConf(CommonConf):
             raise ValueError(f"Incorrect consume_from value '{consume_from}'")
         
         if auto_commit and auto_commit_interval_ms <= 0:
-            raise ValueError("")
+            raise ValueError("auto_commit_interval_ms cannot be <= 0 when auto_commit is True")
+        
+        if poll_frequency_ms < 100:
+            raise ValueError("poll_frequency_ms cannot be less than 100ms")
+        
+        if max_queued_messages < 0:
+            max_queued_messages = 0
+
+        if max_queued_messages_bytes < 0:
+            max_queued_messages_bytes = 0
         
         super().__init__(queue)
 
@@ -144,3 +153,6 @@ class ConsumerConf(CommonConf):
         self.consume_from: str = consume_from
         self.auto_commit: bool = auto_commit
         self.auto_commit_interval_ms: int = auto_commit_interval_ms
+        self.max_queued_messages: int = max_queued_messages
+        self.max_queued_messages_bytes: int = max_queued_messages_bytes
+        self.poll_frequency_ms: int = poll_frequency_ms
