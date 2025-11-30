@@ -1,7 +1,4 @@
-from broker_client import BrokerClient, BrokerClientConf
-from producer import Producer
-from conf import ProducerConf
-from constants import *
+from fast_queue import BrokerClient, BrokerClientConf, Producer, ProducerConf
 
 def on_delivery_callback(message: bytes, key: bytes | None, exception: Exception | None):
     if exception != None:

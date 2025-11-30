@@ -1,9 +1,5 @@
 import time
-from broker_client import BrokerClient, BrokerClientConf
-from consumer import Consumer
-from conf import ConsumerConf
-from constants import *
-from responses import Message
+from ..fast_queue import BrokerClient, BrokerClientConf, Consumer, ConsumerConf, CONSUME_EARLIEST, Message
 
 broker_conf = BrokerClientConf()
 

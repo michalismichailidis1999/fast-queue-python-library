@@ -1,15 +1,15 @@
 from typing import Callable, Dict, Generator
-from broker_client import *
-from constants import *
-from responses import ProduceMessagesResponse
+from .broker_client import *
+from .constants import *
+from .responses import ProduceMessagesResponse
 import threading
 import time
 import mmh3
 import random
-from socket_client import SocketClient
-from lock import ReadWriteLock
-from conf import ProducerConf
-from queue_partitions_handler import QueuePartitionsHandler
+from .socket_client import SocketClient
+from .lock import ReadWriteLock
+from .conf import ProducerConf
+from .queue_partitions_handler import QueuePartitionsHandler
 
 class PartitionMessagesDoubleBuffer:
     def __init__(self):

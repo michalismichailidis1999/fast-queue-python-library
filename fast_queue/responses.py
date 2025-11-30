@@ -1,5 +1,5 @@
 from typing import Any, Dict, List, Set
-from constants import *
+from .constants import *
 
 
 def _response_fields_mapper(res_bytes: bytes, fields: Set[int]):

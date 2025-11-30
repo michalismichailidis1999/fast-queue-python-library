@@ -1,11 +1,11 @@
-from conf import ConsumerConf, ProducerConf
-from socket_client import SocketClient
-from broker_client import BrokerClient
-from lock import ReadWriteLock
+from .conf import ConsumerConf, ProducerConf
+from .socket_client import SocketClient
+from .broker_client import BrokerClient
+from .lock import ReadWriteLock
 from typing import Dict, Tuple, Set
 import time
-from responses import GetQueuePartitionInfoResponse
-from constants import *
+from .responses import GetQueuePartitionInfoResponse
+from .constants import *
 
 class QueuePartitionsHandler:
     def __init__(self, client: BrokerClient, producer_conf: ProducerConf | None = None, consumer_conf: ConsumerConf | None = None):

@@ -4,10 +4,10 @@ from queue import Empty, Queue
 import ssl
 import threading
 from typing import Tuple
-from constants import *
-from exceptions import RetryableException, FastQueueException
-from lock import ReadWriteLock
-from conf import SocketClientConf
+from .constants import *
+from .exceptions import RetryableException, FastQueueException
+from .lock import ReadWriteLock
+from .conf import SocketClientConf
 
 class SocketConnection:
 

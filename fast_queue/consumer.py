@@ -1,15 +1,15 @@
 import threading
 from typing import Dict, List, Set
-from exceptions import FastQueueException
-from lock import ReadWriteLock
-from queue_partitions_handler import QueuePartitionsHandler
-from broker_client import BrokerClient
-from conf import ConsumerConf
-from responses import ConsumeMessagesResponse, GetConsumerAssignedPartitions, Message, RegisterConsumerResponse
-from constants import *
+from .exceptions import FastQueueException
+from .lock import ReadWriteLock
+from .queue_partitions_handler import QueuePartitionsHandler
+from .broker_client import BrokerClient
+from .conf import ConsumerConf
+from .responses import ConsumeMessagesResponse, GetConsumerAssignedPartitions, Message, RegisterConsumerResponse
+from .constants import *
 import time
 
-from socket_client import SocketClient
+from .socket_client import SocketClient
 
 class Consumer(QueuePartitionsHandler):
     def __init__(self, client: BrokerClient, conf: ConsumerConf):

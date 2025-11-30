@@ -1,7 +1,7 @@
 from typing import Any, Dict, Set, Tuple
-from socket_client import *
-from constants import *
-from responses import (
+from .socket_client import *
+from .constants import *
+from .responses import (
     DeleteQueueResponse,
     GetControllersConnectionInfoResponse,
     GetLeaderControllerIdResponse,
@@ -9,8 +9,8 @@ from responses import (
 )
 import time
 import threading
-from lock import ReadWriteLock
-from conf import BrokerClientConf
+from .lock import ReadWriteLock
+from .conf import BrokerClientConf
 
 class BrokerClient:
 

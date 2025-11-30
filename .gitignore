@@ -1,5 +1,2 @@
-# Ignore everything by default
-*
-
-# Include only Python files
-!**/*.py
+.vscode
+__pycache__
