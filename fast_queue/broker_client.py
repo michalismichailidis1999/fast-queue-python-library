@@ -191,7 +191,9 @@ class BrokerClient:
     def _create_request(
         self, req_type: int, values: list[Tuple[int, Any, int | None]] = None, request_needs_authentication: bool = False
     ) -> bytearray:
-        total_bytes: int = 8
+        initial_req_bytes = INT_SIZE * 2
+
+        total_bytes: int = initial_req_bytes
 
         if self._conf._authentication_enable and request_needs_authentication:
             total_bytes += 4 * INT_SIZE + len(self._conf._username) + len(self._conf._password)
@@ -219,10 +221,10 @@ class BrokerClient:
 
         req_bytes = bytearray(total_bytes)
 
-        req_bytes[0:4] = self.__val_to_bytes(total_bytes)
+        req_bytes[0:4] = self.__val_to_bytes(total_bytes - INT_SIZE)
         req_bytes[4:8] = self.__val_to_bytes(req_type)
 
-        pos = 8
+        pos = initial_req_bytes
 
         val_bytes = 0
 

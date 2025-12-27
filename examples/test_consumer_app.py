@@ -1,5 +1,5 @@
 import time
-from ..fast_queue import BrokerClient, BrokerClientConf, Consumer, ConsumerConf, CONSUME_EARLIEST, Message
+from fast_queue import BrokerClient, BrokerClientConf, Consumer, ConsumerConf, CONSUME_EARLIEST, Message
 
 broker_conf = BrokerClientConf()
 
