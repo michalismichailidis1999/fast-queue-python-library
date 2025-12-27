@@ -292,7 +292,7 @@ class Consumer(QueuePartitionsHandler):
     def close(self) -> None:
         self.stopped = True
 
-        self.client.close()
+        self._client.close()
 
         print("Consumer closed")
 

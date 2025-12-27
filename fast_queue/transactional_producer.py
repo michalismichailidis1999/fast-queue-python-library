@@ -35,7 +35,7 @@ class TransactionalProducer:
         self.__lock: ReadWriteLock = ReadWriteLock()
         self.__transaction_group_leader_node_id: int = 0
         self.__transaction_group_id: int = 0
-        self.__stopped: bool = True
+        self.__stopped: bool = False
 
         while self.__transaction_group_id <= 0:
             self.__register_transaction_group(10, 2, True)

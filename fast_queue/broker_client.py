@@ -151,8 +151,8 @@ class BrokerClient:
             if res.success:
                 if res.created:
                     print(f"Queue {queue} created")
-                    time.sleep(15)
-                else: print(f"Queue {queue} already exists")
+                else:
+                    print(f"Queue {queue} already exists")
             else:
                 print(f"Creation of queue {queue} failed")
         except Exception as e:
