@@ -317,7 +317,7 @@ class BrokerClient:
     def _get_node_socket_client(self, node_id: int) -> SocketClient | None:
         self.__lock.acquire_read()
 
-        socket_client = self.__controller_nodes[self.node_id] if self.node_id in self.__controller_nodes else None
+        socket_client = self.__controller_nodes[node_id] if node_id in self.__controller_nodes else None
 
         self.__lock.release_read()
 

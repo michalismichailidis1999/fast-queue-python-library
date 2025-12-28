@@ -112,7 +112,7 @@ class TransactionalProducer:
                 self.__client._create_request(
                     BEGIN_TRANSACTION,
                     [
-                        (TRANSACTION_ID, self.__get_transaction_group_id(), LONG_LONG_SIZE)
+                        (TRANSACTION_GROUP_ID, self.__get_transaction_group_id(), LONG_LONG_SIZE)
                     ]
                 )
             )
