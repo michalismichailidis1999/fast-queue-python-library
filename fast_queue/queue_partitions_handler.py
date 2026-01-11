@@ -25,6 +25,7 @@ class QueuePartitionsHandler:
 
         self._stopped: bool = False
 
+    # TODO: Needs fixing
     def _retrieve_queue_partitions_info(self, retries: int , time_to_wait: int, called_from_contructor: bool = False):
         initial_retries: int = retries
         success: bool = False
@@ -114,7 +115,7 @@ class QueuePartitionsHandler:
     def __set_partition_node(self, partition_id: int, node_id: int, if_not_exists_only: bool = False) -> None:
         self._partitions_lock.acquire_write()
 
-        if (if_not_exists_only and partition_id not in self._partitions_nodes) or True:
+        if (if_not_exists_only and partition_id not in self._partitions_nodes):
             self._partitions_nodes[partition_id] = node_id if node_id > 0 else None
 
         self._partitions_lock.release_write()
