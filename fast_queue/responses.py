@@ -396,3 +396,9 @@ class FinalizeTransactionResponse:
         res_fields = _response_fields_mapper(res_bytes, set([RES_VAL_OK]))
 
         self.success: bool = res_fields["success"] if "success" in res_fields else False
+
+class VerifyTransactionGroupCreationResponse:
+    def __init__(self, res_bytes: bytes):
+        res_fields = _response_fields_mapper(res_bytes, set([RES_VAL_OK]))
+
+        self.success: bool = res_fields["success"] if "success" in res_fields else False
