@@ -207,7 +207,7 @@ class BrokerClient:
                 if val != None and reqValKey == MESSAGES:
                     total_bytes += INT_SIZE
                     
-                    for message, key in val:
+                    for message, key, _ in val:
                         message_bytes = LONG_LONG_SIZE + 2 * INT_SIZE + len(message) + (len(key) if key is not None else 0)
                         total_bytes += message_bytes
                         messages_total_bytes += message_bytes

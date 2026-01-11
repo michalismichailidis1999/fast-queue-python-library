@@ -214,6 +214,9 @@ class TransactionalProducer:
         self.__finalize_transaction(transaction_id=transaction_id, commit=False)
 
     def __finalize_transaction(self, transaction_id: int, commit: bool = False) -> None:
+        for _, producer in self.__producers.items():
+            producer.flush()
+        
         leader_id = self.__get_transaction_group_leader_node_id()
 
         transaction_group_leader_node = self.__client._get_node_socket_client(leader_id)

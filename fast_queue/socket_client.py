@@ -109,7 +109,9 @@ class ConnectionPool:
                     ),
                 )
             else: conn = self.__pool.get_nowait()
-        except: return None
+        except:
+            if conn is None:
+                return None
 
         if conn is not None:
             self.__lock.acquire_write()
@@ -129,8 +131,8 @@ class ConnectionPool:
         if not is_new_conn: self.__borrowed_connections -= 1
 
         if conn is not None:
-            self.__connections_count += 1
             self.__pool.put(conn)
+            self.__connections_count += 1
 
         self.__lock.release_write()
 
@@ -171,7 +173,7 @@ class ConnectionPool:
         while not self.__stopped:
             conns_diff = self.__max_pool_connections - self.get_connections_count()
 
-            if conns_diff == 0:
+            if conns_diff <= 0:
                 time.sleep(self.__wait_seconds_to_add_new_conn)
                 continue
 
