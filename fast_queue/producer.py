@@ -236,7 +236,7 @@ class Producer(QueuePartitionsHandler):
             partition_ex = e
         
         if self.__on_message_delivery_callback != None:
-            for message, key in messages:
+            for message, key, transaction_id in messages:
                 self.__on_message_delivery_callback(message, key, partition_ex)
 
     def close(self):

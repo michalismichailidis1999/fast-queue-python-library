@@ -330,21 +330,9 @@ class BrokerClient:
             if node_id in self.__controller_nodes: del self.__controller_nodes[node_id]
             self.__controller_nodes[node_id] = SocketClient(address=new_address, port=new_port, conf=self._conf, raise_on_conn_init=False)
         except Exception as e:
-            print(f"Error occured while trying to connect to controlelr node {node_id}. {e}")
+            print(f"Error occured while trying to connect to controller node {node_id}. {e}")
         finally:
             self.__lock.release_write()
-
-    def __get_controller_node_conenction_info(self, node_id: int) -> Tuple[str, int] | None:
-        self.__lock.acquire_read()
-
-        conn_info: Tuple[str, int] | None = None
-
-        if node_id in self.__controller_nodes:
-            conn_info = self.__controller_nodes[node_id].get_connection_info()
-
-        self.__lock.release_read()
-
-        return conn_info
     
     def __set_leader_id(self, leader_id: int) -> None:
         self.__lock.acquire_write()

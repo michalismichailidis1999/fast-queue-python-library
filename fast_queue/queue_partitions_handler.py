@@ -25,7 +25,6 @@ class QueuePartitionsHandler:
 
         self._stopped: bool = False
 
-    # TODO: Needs fixing
     def _retrieve_queue_partitions_info(self, retries: int , time_to_wait: int, called_from_contructor: bool = False):
         initial_retries: int = retries
         success: bool = False
@@ -52,11 +51,11 @@ class QueuePartitionsHandler:
 
                     self.__set_total_partitions(res.total_partitions)
 
-                    to_keep = set()
+                    nodes_to_keep = set()
                     partitions_to_keep = set()
 
                     for partition_leader in res.partition_leader_nodes:
-                        to_keep.add(partition_leader.node_id)
+                        nodes_to_keep.add(partition_leader.node_id)
                         partitions_to_keep.add(partition_leader.partition_id)
 
                         conn_info: Tuple[str, int] | None = self.__get_leader_node_conenction_info(partition_leader.node_id)
@@ -74,7 +73,7 @@ class QueuePartitionsHandler:
                         self.__set_partition_node(partition_id=partition_leader.partition_id, node_id=partition_leader.node_id)
 
                     self.__remove_partition_nodes(partitions_to_keep)
-                    self.__remove_unused_controller_nodes(to_keep)
+                    self.__remove_unused_nodes(nodes_to_keep)
 
                     if called_from_contructor:
                         print(f"Initialized queue's {self._conf.queue} partition leader nodes")
@@ -115,7 +114,7 @@ class QueuePartitionsHandler:
     def __set_partition_node(self, partition_id: int, node_id: int, if_not_exists_only: bool = False) -> None:
         self._partitions_lock.acquire_write()
 
-        if (if_not_exists_only and partition_id not in self._partitions_nodes):
+        if (if_not_exists_only and partition_id not in self._partitions_nodes) or not if_not_exists_only:
             self._partitions_nodes[partition_id] = node_id if node_id > 0 else None
 
         self._partitions_lock.release_write()
@@ -153,7 +152,7 @@ class QueuePartitionsHandler:
     def __remove_partition_nodes(self, to_keep: Set[int]) -> None:
         self._partitions_lock.acquire_write()
 
-        partition_ids = [i for i in range(self._total_partitions)]
+        partition_ids = [partition_id for partition_id, _ in self._partitions_nodes.items()]
 
         for partition_id in partition_ids:
             if partition_id not in to_keep:
@@ -161,11 +160,11 @@ class QueuePartitionsHandler:
 
         self._partitions_lock.release_write()
     
-    def __remove_unused_controller_nodes(self, to_keep: Set[int]):
+    def __remove_unused_nodes(self, to_keep: Set[int]):
         self._partitions_lock.acquire_write()
 
         try:
-            node_ids = list(self._partition_clients.keys())
+            node_ids = [node_id for node_id, _ in self._partition_clients.items()]
             for node_id in node_ids:
                 if node_id not in to_keep and node_id is not None:
                     del self._partition_clients[node_id]

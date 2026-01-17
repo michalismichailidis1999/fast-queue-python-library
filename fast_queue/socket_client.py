@@ -314,6 +314,8 @@ class SocketClient:
                         error_code=TIMEOUT_ERROR,
                         error_message="Waiting for response timed out",
                     )
+                except FastQueueException as e:
+                    raise e
                 except Exception as e:
                     conn.close()
                     self.__pool.return_connection(None)
