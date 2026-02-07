@@ -151,7 +151,7 @@ class BrokerClient:
                             (QUEUE_NAME, queue, None),
                             (PARTITIONS, partitions, None),
                             (REPLICATION_FACTOR, replication_factor, None),
-                            (CLEANUP_POLICY, cleanup_policy)
+                            (CLEANUP_POLICY, cleanup_policy, None)
                         ],
                         True,
                     )
