@@ -48,10 +48,11 @@ class PartitionMessagesDoubleBuffer:
 
 class Producer(QueuePartitionsHandler):
 
-    def __init__(self, client: BrokerClient, conf: ProducerConf, on_delivery_callback: Callable[[bytes, bytes | None, Exception], None] = None) -> None:
+    def __init__(self, client: BrokerClient, conf: ProducerConf, on_delivery_callback: Callable[[bytes, bytes | None, Exception], None] = None, is_in_tx_group: bool = False) -> None:
         super().__init__(client=client, producer_conf=conf)
 
         self.__on_message_delivery_callback: Callable[[bytes, bytes | None, Exception], None] = on_delivery_callback
+        self.is_in_tx_group: bool = is_in_tx_group
 
         self.__messages: PartitionMessagesDoubleBuffer = PartitionMessagesDoubleBuffer()
         self.__produce_lock: ReadWriteLock = ReadWriteLock()
@@ -229,7 +230,8 @@ class Producer(QueuePartitionsHandler):
                             (TRANSACTION_GROUP_ID, transaction_group_id, LONG_LONG_SIZE),
                             (MESSAGES, messages, None)
                         ]
-                    )
+                    ),
+                    1 if self.is_in_tx_group else None
                 )
             )
         except Exception as e:

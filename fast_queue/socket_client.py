@@ -250,10 +250,10 @@ class SocketClient:
     def get_connection_info(self) -> Tuple[str, int]:
         return (self.__address, self.__port)
 
-    def send_request(self, req: bytearray) -> bytes:
+    def send_request(self, req: bytearray, retries: int = None) -> bytes:
         conn: SocketConnection = None
 
-        retries = self.__conf._retries
+        retries = retries if retries is not None else self.__conf._retries
         err: Exception = None
 
         while retries > 0:
