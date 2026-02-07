@@ -123,10 +123,19 @@ class BrokerClient:
             time.sleep(time_to_wait)
 
     def create_queue(
-        self, queue: str, partitions: int = 1, replication_factor: int = 1
+        self, queue: str, partitions: int = 1, replication_factor: int = 1, cleanup_policy: int = DELETE_SEGMENTS
     ) -> None:
         if not queue:
             raise ValueError("Empty queue name was passed as argument")
+        
+        if partitions <= 0:
+            raise ValueError("partitions must be a positive integer")
+        
+        if replication_factor <= 0:
+            raise ValueError("replication_factor must be a positive integer")
+        
+        if cleanup_policy != DELETE_SEGMENTS and cleanup_policy != COMPACT_SEGMENTS:
+            raise ValueError("cleanup_policy can only have value 1 or 2")
 
         try:
             leader = self._get_leader_node_socket_client()
@@ -142,6 +151,7 @@ class BrokerClient:
                             (QUEUE_NAME, queue, None),
                             (PARTITIONS, partitions, None),
                             (REPLICATION_FACTOR, replication_factor, None),
+                            (CLEANUP_POLICY, cleanup_policy)
                         ],
                         True,
                     )
