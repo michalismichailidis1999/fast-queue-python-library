@@ -8,7 +8,7 @@ from .producer import Producer
 from .conf import ProducerConf
 from .lock import ReadWriteLock
 from .constants import *
-from .responses import BeginTransactionResponse, FinalizeTransactionResponse, RegisterTransactionGroupResponse, VerifyTransactionGroupCreationResponse
+from .responses import BeginTransactionResponse, FinalizeTransactionResponse, RegisterTransactionGroupResponse, SendHeartbeatToTransactionGroupResponse, VerifyTransactionGroupCreationResponse
 
 class TransactionalProducer:
     """
@@ -52,6 +52,9 @@ class TransactionalProducer:
         t2 = threading.Thread(target=self.__verify_transaction_group_registration, args=[1, 15, False], daemon=True)
         t2.start()
 
+        t3 = threading.Thread(target=self.__send_heartbeats_to_transaction_group, args=[10], daemon=True)
+        t3.start()
+
     def __register_transaction_group(self, initial_retries: int, time_to_wait: int, called_from_constructor: bool = False):
         while not self.__stopped:
             if self.__get_transaction_group_id() > 0:
@@ -85,6 +88,7 @@ class TransactionalProducer:
                             raise Exception("Unsuccessfull transaction producer registration")
                         
                         self.__set_transaction_group_id(res.leader_id, res.transaction_group_id)
+                        print(f"Transaction group {res.transaction_group_id} registered successfully at cluster node {res.leader_id}")
 
                         break
                     except Exception as e:
@@ -140,6 +144,15 @@ class TransactionalProducer:
                         self.__set_verified_transaction_group_id(tx_group_id)
 
                         break
+                    except FastQueueException as e:
+                        if e.error_code == TRANSACTION_GROUP_UNREGISTERED:
+                            self.__set_transaction_group_id(-1, 0)
+                        
+                        retries -= 1
+
+                        if retries <= 0: raise e
+                        else:
+                            time.sleep(time_to_wait)
                     except Exception as e:
                         retries -= 1
 
@@ -154,6 +167,45 @@ class TransactionalProducer:
             if called_from_constructor: break
 
             time.sleep(time_to_wait)
+
+    def __send_heartbeats_to_transaction_group(self, time_to_wait: int):
+        transaction_group_id: int = 0
+        leader_node_id: int = 0
+
+        while not self.__stopped:
+            try:
+                transaction_group_id = self.__get_transaction_group_id()
+                leader_node_id = self.__get_transaction_group_leader_node_id()
+
+                if not self.__can_execute_transactional_command():
+                    transaction_group_id = 0
+                    leader_node_id = 0
+                    continue
+
+                leader_node = self.__client._get_node_socket_client(leader_node_id)
+
+                if leader_node is None:
+                    raise Exception(f"No controller node socket client found for node_id {leader_node_id}")
+                
+                res = SendHeartbeatToTransactionGroupResponse(
+                    leader_node.send_request(
+                        self.__client._create_request(
+                            TRANSACTION_GROUP_HEARTBEAT,
+                            [
+                                (TRANSACTION_GROUP_ID, transaction_group_id, LONG_LONG_SIZE)
+                            ]
+                        )
+                    )
+                )
+                
+                if not res.success:
+                    raise Exception("Failed to update transaction group's heartbeat")
+
+            except Exception as e:
+                print(f"Failed to send heartbeat to transaction group {transaction_group_id} at cluster node {leader_node_id}. Reason: {e}")
+            finally:
+                if not self.__stopped:
+                    time.sleep(time_to_wait)
 
     def produce(self, queue_name: str, message: str, key: str = None, transaction_id: int = 0) -> None:
         if not self.__can_execute_transactional_command():
@@ -242,7 +294,7 @@ class TransactionalProducer:
                 )
             ).success
         except FastQueueException as e:
-            if e.error_code == INCORRECT_LEADER:
+            if e.error_code == TRANSACTION_GROUP_UNREGISTERED:
                 self.__set_transaction_group_id(-1, 0)
             else:
                 raise e
@@ -268,15 +320,6 @@ class TransactionalProducer:
         self.__lock.release_read()
 
         return tx_group_id
-    
-    def __get_verified_transaction_group_id(self) -> int:
-        self.__lock.acquire_read()
-
-        verified_tx_group_id: int = self.__verified_transaction_group_id
-
-        self.__lock.release_read()
-
-        return verified_tx_group_id
 
     def __get_transaction_group_leader_node_id(self) -> int:
         self.__lock.acquire_read()
