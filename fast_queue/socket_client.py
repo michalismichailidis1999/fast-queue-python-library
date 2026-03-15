@@ -162,8 +162,16 @@ class ConnectionPool:
 
             if ssock.getpeercert() is None:
                 raise ssl.SSLError("Failed to retrieve server certificate")
-
+            
         conn: SocketConnection = SocketConnection(sock=sock, ssl_sock=ssock)
+
+        res = conn.receive_bytes()
+
+        err_code = int.from_bytes(bytes=res[:INT_SIZE], byteorder=ENDIAS)
+
+        if err_code != NO_ERROR:
+            err_msg = "Max connections limit reached" if err_code == MAX_CONNECTIONS_LIMIT_REACHED else "Could not connect to server. Received error code " + str(err_code)
+            raise Exception(err_msg)
 
         self.return_connection(conn=conn, is_new_conn=True)
 
